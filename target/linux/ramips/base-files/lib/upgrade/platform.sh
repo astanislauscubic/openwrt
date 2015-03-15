@@ -92,6 +92,7 @@ platform_check_image() {
 	whr-g300n |\
 	ur-326n4g |\
 	ur-336un |\
+	wibe-4g |\
 	wr512-3gn |\
 	wmr300 |\
 	wr8305rt |\

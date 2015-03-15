@@ -79,6 +79,9 @@ ramips_board_detect() {
 	*"DCS-930")
 		name="dcs-930"
 		;;
+	*"Deltenna WiBE 4G")
+		name="wibe-4g"
+    ;;
 	*"DIR-300 B1")
 		name="dir-300-b1"
 		;;

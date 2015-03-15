@@ -504,6 +504,8 @@ endef
 BuildFirmware/WHRG300N/initramfs=$(call BuildFirmware/OF/initramfs,$(1),whr-g300n,WHR-G300N)
 Image/Build/Profile/WHRG300N=$(call BuildFirmware/WHRG300N/$(1),$(1))
 
+Image/Build/Profile/WIBE4G=$(call BuildFirmware/DefaultDualSize/$(1),$(1),wibe-4g,WIBE4G)
+
 Image/Build/Profile/WL_330N=$(call BuildFirmware/Default4M/$(1),$(1),wl-330n,WL_330N)
 
 Image/Build/Profile/WL_330N3G=$(call BuildFirmware/Default4M/$(1),$(1),wl-330n3g,WL_330N3G)
@@ -635,6 +637,7 @@ define Image/Build/Profile/Default
 	$(call Image/Build/Profile/X5,$(1))
 	$(call Image/Build/Profile/X8,$(1))
 	$(call Image/Build/Profile/XDXRN502J,$(1))
+	$(call Image/Build/Profile/WIBE4G,$(1))
 endef
 endif
 
