@@ -1,0 +1,27 @@
+#!/bin/sh
+
+SSID=$(dd if=/dev/mtdblock2 bs=1 skip=65196 count=32 2>/dev/null)
+KEY=$(dd if=/dev/mtdblock2 bs=1 skip=65084 count=64 2>/dev/null)
+
+uci import <<EOF
+package wireless
+
+config wifi-device 'radio0'
+        option type 'mac80211'
+        option hwmode '11g'
+        option path '10180000.wmac'
+        option htmode 'HT20'
+        option channel 'auto'
+        option txpower '20'
+        option country 'GB'
+
+config wifi-iface
+        option device 'radio0'
+        option network 'lan'
+        option mode 'ap'
+        option ssid '$SSID'
+        option encryption 'psk2'
+        option key '$KEY'
+EOF
+
+exit 0
