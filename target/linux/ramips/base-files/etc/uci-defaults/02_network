@@ -121,14 +121,18 @@ ramips_setup_interfaces()
 	rt-n14u | \
 	wrtnode | \
 	ur-326n4g | \
-	wibe-4g | \
 	zbt-wa05)
 		ucidef_set_interfaces_lan_wan "eth0.1" "eth0.2"
 		ucidef_add_switch "switch0" "1" "1"
 		ucidef_add_switch_vlan "switch0" "1" "1 2 3 4 6t"
 		ucidef_add_switch_vlan "switch0" "2" "0 6t"
 		;;
-
+	wibe-4g)
+		ucidef_set_interfaces_lan_wan "eth0.1 eth0.2" "wwan0"
+		ucidef_add_switch "switch0" "1" "1"
+		ucidef_add_switch_vlan "switch0" "1" "1 6t"
+		ucidef_add_switch_vlan "switch0" "2" "2 6t"
+		;;
 	ur-336un)
 		ucidef_set_interfaces_lan_wan "eth0.1" "eth0.2"
 		;;
@@ -287,6 +291,8 @@ ramips_setup_macs()
 	w502u | \
 	wnce2001)
 		wan_mac=$(mtd_get_mac_binary factory 46)
+		;;
+	wibe-4g)
 		;;
 
 	*)
