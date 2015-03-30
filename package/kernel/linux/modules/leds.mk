@@ -182,3 +182,17 @@ define KernelPackage/leds-tlc59116/description
 endef
 
 $(eval $(call KernelPackage,leds-tlc59116))
+
+define KernelPackage/leds-wibe
+  SUBMENU:=$(LEDS_MENU)
+  TITLE:=Deltenna WiBE LED support
+  KCONFIG:=CONFIG_LEDS_WIBE
+  FILES:=$(LINUX_DIR)/drivers/leds/leds-wibe.ko
+  AUTOLOAD:=$(call AutoLoad,60,leds-wibe,1)
+endef
+
+define KernelPackage/leds-wibe/description
+ Kernel module for LEDs on Deltenna WiBE
+endef
+
+$(eval $(call KernelPackage,leds-wibe))
