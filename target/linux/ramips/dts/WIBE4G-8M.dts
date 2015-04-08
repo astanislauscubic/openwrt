@@ -72,6 +72,10 @@
 		compatible = "deltenna,wibe-leds";
   };
 
+	wibe-antenna {
+		compatible = "deltenna,wibe-antenna";
+  };
+
 	gpio-keys-polled {
 		compatible = "gpio-keys-polled";
 		#address-cells = <1>;

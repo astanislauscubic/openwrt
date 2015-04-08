@@ -923,3 +923,17 @@ define KernelPackage/thermal-kirkwood/description
 endef
 
 $(eval $(call KernelPackage,thermal-kirkwood))
+
+define KernelPackage/antenna-wibe
+  SUBMENU:=$(OTHER_MENU)
+  TITLE:=WiBE Antenna Support
+  KCONFIG:=CONFIG_WIBE_ANTENNA
+  FILES:=$(LINUX_DIR)/drivers/misc/antenna-wibe.ko
+  AUTOLOAD:=$(call AutoLoad,61,antenna-wibe,1)
+endef
+
+define KernelPackage/antenna-wibe/description
+ Support for the WiBE Antenna
+endef
+
+$(eval $(call KernelPackage,antenna-wibe))
