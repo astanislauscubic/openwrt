@@ -43,13 +43,13 @@ diff -uNr linux-3.10.49/drivers/misc/antenna-wibe.c linux-3.10.49/drivers/misc/a
 +{
 +	switch (active_antenna) {
 +		case 0:
-+			return snprintf(buf, PAGE_SIZE, "up\n");
++			return snprintf(buf, PAGE_SIZE, "back\n");
 +		case 1:
 +			return snprintf(buf, PAGE_SIZE, "right\n");
 +		case 2:
 +			return snprintf(buf, PAGE_SIZE, "left\n");
 +		case 3:
-+			return snprintf(buf, PAGE_SIZE, "down\n");
++			return snprintf(buf, PAGE_SIZE, "front\n");
 +		default:
 +			return snprintf(buf, PAGE_SIZE, "unknown\n");
 +	}
@@ -92,7 +92,7 @@ diff -uNr linux-3.10.49/drivers/misc/antenna-wibe.c linux-3.10.49/drivers/misc/a
 +	return change_antenna(buf[0] - '0', count);
 +}
 +
-+static DEVICE_ATTR(antenna, 0444, show_antenna, store_antenna);
++static DEVICE_ATTR(antenna, 0666, show_antenna, store_antenna);
 +
 +static int wibeantenna_probe(struct platform_device *pdev)
 +{
