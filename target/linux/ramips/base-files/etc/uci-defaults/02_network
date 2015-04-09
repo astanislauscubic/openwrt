@@ -128,10 +128,17 @@ ramips_setup_interfaces()
 		ucidef_add_switch_vlan "switch0" "2" "0 6t"
 		;;
 	wibe-4g)
-		ucidef_set_interfaces_lan_wan "eth0.1 eth0.2" "wwan0"
+		ucidef_set_interface_lan "eth0.1 eth0.2"
 		ucidef_add_switch "switch0" "1" "1"
 		ucidef_add_switch_vlan "switch0" "1" "1 6t"
 		ucidef_add_switch_vlan "switch0" "2" "2 6t"
+    uci batch <<EOF
+set network.wan='interface'
+set network.wan.ifname='wwan0'
+set network.wan.proto='qmi'
+set network.wan.device='/dev/cdc-wdm0'
+set network.wan.modes='all'
+EOF
 		;;
 	ur-336un)
 		ucidef_set_interfaces_lan_wan "eth0.1" "eth0.2"
@@ -293,6 +300,7 @@ ramips_setup_macs()
 		wan_mac=$(mtd_get_mac_binary factory 46)
 		;;
 	wibe-4g)
+    wan_mac="DE:74:66:80:B9:5D"
 		;;
 
 	*)
