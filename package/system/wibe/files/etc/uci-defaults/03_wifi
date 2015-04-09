@@ -22,6 +22,7 @@ config wifi-iface
         option ssid '$SSID'
         option encryption 'psk2'
         option key '$KEY'
+        option wmm '0'
 EOF
 
 exit 0
