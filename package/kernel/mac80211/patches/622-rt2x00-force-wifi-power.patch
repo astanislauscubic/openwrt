@@ -1,0 +1,20 @@
+--- a/drivers/net/wireless/rt2x00/rt2x00eeprom.c	2015-04-09 12:51:21.472000000 +0100
++++ b/drivers/net/wireless/rt2x00/rt2x00eeprom.c	2015-04-09 12:55:26.884000000 +0100
+@@ -35,6 +35,7 @@
+ 
+ static int rt2800lib_read_eeprom_mtd(struct rt2x00_dev *rt2x00dev)
+ {
++  int i;
+ 	int ret = -EINVAL;
+ #ifdef CONFIG_OF
+ 	static struct firmware mtd_fw;
+@@ -76,6 +77,9 @@
+ 	ret = mtd_read(mtd, offset, len, &retlen, (u_char *) rt2x00dev->eeprom);
+ 	put_mtd_device(mtd);
+ 
++  for (i = 0; i < 28; ++i)
++    ((u8 *)rt2x00dev->eeprom)[82+i] = 0x03;
++
+ 	if (!ret) {
+ 		rt2x00dev->eeprom_file = &mtd_fw;
+ 		mtd_fw.size = len;
