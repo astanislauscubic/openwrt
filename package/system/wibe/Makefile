@@ -46,12 +46,16 @@ endef
 
 define Package/wibe/install
 	mkdir -p $(1)/etc/uci-defaults
-	$(INSTALL_DIR) $(1)/usr/sbin/
+	$(INSTALL_DIR) $(1)/sbin/
+	$(INSTALL_DIR) $(1)/etc/init.d/
+	$(INSTALL_DIR) $(1)/usr/share/umtsd/
 
+	$(CP) ./files/etc/init.d/umtsd $(1)/etc/init.d/umtsd
+	$(CP) ./files/usr/share/umtsd/umtsd.sh $(1)/usr/share/umtsd/umtsd.sh
 	$(CP) ./files/etc/uci-defaults/00_password $(1)/etc/uci-defaults/
 	$(CP) ./files/etc/uci-defaults/03_wifi $(1)/etc/uci-defaults
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/umtsd $(1)/usr/sbin/umtsd
-	$(STRIP) $(1)/usr/sbin/umtsd
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/umtsd $(1)/sbin/umtsd
+	$(STRIP) $(1)/sbin/umtsd
 endef
 
 $(eval $(call BuildPackage,wibe))

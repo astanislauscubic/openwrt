@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+
+boot() {
+  return 0
+}
+
+start() {
+  /sbin/start-stop-daemon -S -b -m -p /var/run/umtsd-sh.pid -x /usr/share/umtsd/umtsd.sh
+}
+
+stop() {
+  /sbin/start-stop-daemon -K -p /var/run/umtsd-sh.pid
+  sleep 1
+  /sbin/start-stop-daemon -K -x /sbin/umtsd
+}

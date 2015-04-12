@@ -137,7 +137,11 @@ set network.wan='interface'
 set network.wan.ifname='wwan0'
 set network.wan.proto='qmi'
 set network.wan.device='/dev/cdc-wdm0'
-set network.wan.modes='all'
+set network.wan.modes='detect'
+set network.wan.antenna='detect'
+set network.wan.apn='everywhere'
+set network.wan.regtimeout='60'
+set network.wan.settlewait='10'
 EOF
 		;;
 	ur-336un)
@@ -300,7 +304,7 @@ ramips_setup_macs()
 		wan_mac=$(mtd_get_mac_binary factory 46)
 		;;
 	wibe-4g)
-    wan_mac="DE:74:66:80:B9:5D"
+#    wan_mac="DE:74:66:80:B9:5D"
 		;;
 
 	*)
