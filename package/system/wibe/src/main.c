@@ -25,10 +25,9 @@ struct QmiSettings {
   int regtimeout;
   int settlewait;
 };
-
 static struct QmiSettings qmi_settings;
 
-void print_settings(void)
+static void print_settings(void)
 {
   fprintf(stderr, "Protocol:    %s\n", qmi_settings.proto);
   fprintf(stderr, "Device:      %s\n", qmi_settings.device);
@@ -42,7 +41,201 @@ void print_settings(void)
   fprintf(stderr, "Settle Wait: %d\n", qmi_settings.settlewait);
 }
 
-int uci_get_string(const char *key, char *value, size_t len)
+static void snmp_write_string(FILE *snmpfile, const char *key, const char *value)
+{
+  if (!value)
+    return;
+
+  fprintf(snmpfile, "%s=\"%s\"\n", key, value);
+}
+
+static void snmp_write_int(FILE *snmpfile, const char *key, int value)
+{
+  fprintf(snmpfile, "%s=\"%d\"\n", key, value);
+}
+
+enum SignalType {
+  TypeLte,
+  TypeWcdma,
+  TYPE_COUNT,
+  TypeUnknown = TYPE_COUNT
+};
+
+static const char *SignalTypeText[] = {
+  [TypeLte] = "LTE",
+  [TypeWcdma] = "WCDMA",
+  [TypeUnknown] = "Unknown"
+};
+
+struct ApnItem {
+  const char* apn;
+  const char* username;
+  const char* password;
+  struct ApnItem *next;
+};
+static struct ApnItem *apn_list = NULL;
+
+// Explicit numbers to match entries in WIBE SNMP MIB
+enum SimStatus {
+   SimOk = 0,
+   SimFailure = 1,
+   SimUnknown = 2,
+   NoSim = 3,
+   SimPinIncorrect = 4,
+   SimPinRequired = 5,
+   SimPukRequired = 6,
+   SimPin2Required = 7,
+   SimPuk2Required = 8,
+   SimBusy = 9
+};
+
+static const char *SimStatusText[] = {
+  [SimOk] = "SIM OK",
+  [SimFailure] = "SIM Failure",
+  [SimUnknown] = "Sim Status Unknown",
+  [NoSim] = "No SIM Present",
+  [SimPinIncorrect] = "SIM PIN Incorrect",
+  [SimPinRequired] = "SIM PIN Required",
+  [SimPukRequired] = "SIM PUK Required",
+  [SimPin2Required] = "SIM PIN2 Required",
+  [SimPuk2Required] = "SIM PUK2 Required",
+  [SimBusy] = "SIM Busy"
+};
+
+enum Registration {
+  NoService = 0,
+  HomeNetwork = 1,
+  Searching = 2,
+  RegistrationDenied = 3,
+  RegistrationProblem = 4,
+  RoamingNetwork = 5
+};
+
+static const char *RegistrationText[] = {
+  [NoService] = "No Service",
+  [HomeNetwork] = "Home Network",
+  [Searching] = "Searching",
+  [RegistrationDenied] = "Registration Denied",
+  [RegistrationProblem] = "Registration Problem",
+  [RoamingNetwork] = "Roaming Network",
+};
+
+enum Antenna {
+  FrontBeam = 0,
+  BackBeam = 1,
+  LeftBeam = 2,
+  RightBeam = 3,
+  BeamCount,
+  UnknownBeam = BeamCount
+};
+
+static const char *AntennaText[] = {
+  [FrontBeam] = "front",
+  [BackBeam] = "back",
+  [LeftBeam] = "left",
+  [RightBeam] = "right",
+  [UnknownBeam] = "unknown"
+};
+
+
+struct QmiStatus {
+  const char *imei;
+  const char *imsi;
+  const char *msisdn;
+  int cid;
+  int lac;
+  enum SimStatus sim_status;
+  enum Registration wan_status;
+  enum Antenna active_antenna;
+  enum SignalType signal_type;
+  int rssi;
+  union {
+    struct {
+      int ecio;
+    };
+    struct {
+      int rsrq;
+      int rsrp;
+      int snr;
+    };
+  };
+  struct ApnItem *apn;
+  bool changed;
+};
+static struct QmiStatus qmi_status;
+
+static void qmi_clear_status(void)
+{
+  qmi_status.imei = NULL;
+  qmi_status.imsi = NULL;
+  qmi_status.msisdn = NULL;
+
+  qmi_status.sim_status = SimUnknown;
+  qmi_status.wan_status = NoService;
+  qmi_status.active_antenna = UnknownBeam;
+  qmi_status.signal_type = TypeUnknown;
+
+  qmi_status.rssi = -999;
+  qmi_status.ecio = -999;
+  qmi_status.rsrp = -999;
+  qmi_status.rsrq = -999;
+  qmi_status.snr = -999;
+
+  qmi_status.apn = NULL;
+
+  qmi_status.changed = true;
+}
+
+static void snmp_write_status(void)
+{
+  if (!qmi_status.changed)
+    return;
+
+  FILE *snmpfile = fopen("/tmp/wibe_snmp", "w");
+  assert(snmpfile);
+
+  snmp_write_string(snmpfile, "1S10.0", qmi_status.imei);
+  snmp_write_string(snmpfile, "1S14.0", qmi_status.imsi);
+  snmp_write_string(snmpfile, "1S17.0", qmi_status.msisdn);
+
+  if (qmi_status.apn)
+  {
+    snmp_write_string(snmpfile, "1S2151.0", qmi_status.apn->apn);
+    snmp_write_string(snmpfile, "1S2152.0", qmi_status.apn->username);
+    snmp_write_string(snmpfile, "1S2153.0", qmi_status.apn->password);
+  }
+
+  snmp_write_int(snmpfile, "1S12.0", qmi_status.sim_status);
+  snmp_write_string(snmpfile, "1S11.0", SimStatusText[qmi_status.sim_status]);
+
+  snmp_write_string(snmpfile, "1S13.0", AntennaText[qmi_status.active_antenna]);
+
+  snmp_write_int(snmpfile, "1S259.0", qmi_status.wan_status);
+  snmp_write_string(snmpfile, "1S258.0", RegistrationText[qmi_status.wan_status]);
+
+  snmp_write_int(snmpfile, "1S261.0", qmi_status.rssi);
+  if (qmi_status.signal_type == TypeLte)
+  {
+    snmp_write_int(snmpfile, "1S265.0", qmi_status.rsrp);
+    snmp_write_int(snmpfile, "1S266.0", qmi_status.rsrq);
+    snmp_write_int(snmpfile, "1S267.0", qmi_status.snr);
+  }
+  else if (qmi_status.signal_type == TypeWcdma)
+  {
+    snmp_write_int(snmpfile, "1S262.0", qmi_status.ecio);
+  }
+
+  snmp_write_string(snmpfile, "1S264.0", SignalTypeText[qmi_status.signal_type]);
+
+  snmp_write_int(snmpfile, "1S773.0", qmi_status.cid);
+  snmp_write_int(snmpfile, "1S774.0", qmi_status.lac);
+
+  fclose(snmpfile);
+
+  qmi_status.changed = false;
+}
+
+static int uci_get_string(const char *key, char *value, size_t len)
 {
   struct uci_context *c;
   struct uci_ptr p;
@@ -65,7 +258,7 @@ int uci_get_string(const char *key, char *value, size_t len)
   return strlen(value);
 }
 
-int uci_get_int_default(const char *key, int *value, int def)
+static int uci_get_int_default(const char *key, int *value, int def)
 {
   char buf[64];
   int ret = uci_get_string(key, buf, sizeof(buf));
@@ -73,7 +266,7 @@ int uci_get_int_default(const char *key, int *value, int def)
   return strlen(buf);
 }
 
-int uci_get_string_default(const char *key, char *value, size_t len, const char *def)
+static int uci_get_string_default(const char *key, char *value, size_t len, const char *def)
 {
   int ret = uci_get_string(key, value, len);
   if (ret < 0)
@@ -81,7 +274,7 @@ int uci_get_string_default(const char *key, char *value, size_t len, const char 
   return strlen(value);
 }
 
-int load_settings(void)
+static int load_settings(void)
 {
   if (!uci_get_string("network.wan.proto", qmi_settings.proto,
                       sizeof(qmi_settings.proto)))
@@ -115,7 +308,7 @@ struct QmiResponse {
   char response_string[128];
 };
 
-void uqmi_free(struct QmiResponse *resp)
+static void uqmi_free(struct QmiResponse *resp)
 {
   if (!resp)
     return;
@@ -125,14 +318,14 @@ void uqmi_free(struct QmiResponse *resp)
   free(resp);
 }
 
-bool modem_is_present(void)
+static bool modem_is_present(void)
 {
   struct stat device_stat;
   lstat(qmi_settings.device, &device_stat);
   return S_ISCHR(device_stat.st_mode);
 }
 
-void uqmi_reset(void)
+static void uqmi_power(bool powerOn)
 {
   int fd = open("/sys/class/gpio/gpio10/value", O_WRONLY);
   if (fd < 0)
@@ -141,23 +334,25 @@ void uqmi_reset(void)
     exit(1);
   }
 
-  if (write(fd, "0", 1) != 1)
+  if (write(fd, (powerOn) ? "1" : "0", 1) != 1)
   {
     syslog(LOG_ERR, "Failed to write modem reset GPIO (0)");
   }
-  sleep(5);
-  if (write(fd, "1", 1) != 1)
-  {
-    syslog(LOG_ERR, "Failed to write modem reset GPIO (1)");
-  }
 
   close(fd);
+}
+
+static void uqmi_reset(void)
+{
+  uqmi_power(false);
+  sleep(1);
+  uqmi_power(true);
 
   while (!modem_is_present())
     sleep(1);
 }
 
-struct QmiResponse *uqmi_once(const char * const args)
+static struct QmiResponse *uqmi_once(const char * const args)
 {
   char cmd[256];
   snprintf(cmd, 256, "uqmi -s -d %s %s", qmi_settings.device, args);
@@ -215,12 +410,12 @@ struct QmiResponse *uqmi_once(const char * const args)
   return resp;
 }
 
-bool uqmi_is_error(const struct QmiResponse * const resp)
+static bool uqmi_is_error(const struct QmiResponse * const resp)
 {
   return resp->error_string[0] != '\0';
 }
 
-struct QmiResponse *uqmi(const char * const args)
+static struct QmiResponse *uqmi(const char * const args)
 {
   // Multiple retries if we get the "Unknown Error" response
   for (int i = 0; i < 5; ++i)
@@ -278,7 +473,7 @@ int uqmi_get_int(const struct QmiResponse * const resp,
   }
   return -1;
 }
-bool sim_is_present(void)
+static bool sim_is_present(void)
 {
   int fd = open("/sys/class/gpio/gpio8/value", O_RDONLY);
   if (fd < 0)
@@ -299,22 +494,28 @@ bool sim_is_present(void)
   return atoi(gpio_str) == 1;
 }
 
-void antenna_select(uint8_t beam, bool flash)
+static void led_3g_red(bool on)
 {
-  const char *beams[] = {"front", "back", "left", "right"};
-
   int fd, bytes;
-  char filename[128];
-
-  for (int i = 0; i < 4; ++i)
+  const char filename[] = "/sys/class/leds/wibe:3g:red/trigger";
+  fd = open(filename, O_WRONLY);
+  assert(fd);
+  if (on)
   {
-    snprintf(filename, 128, "/sys/class/leds/wibe:%s:green/trigger", beams[i]);
-    fd = open(filename, O_WRONLY);
-    assert(fd);
+    bytes = write(fd, "default-on", 10);
+    assert(bytes == 10);
+  }
+  else
+  {
     bytes = write(fd, "none", 4);
     assert(bytes == 4);
-    close(fd);
   }
+  close(fd);
+}
+
+static void antenna_select(uint8_t beam, bool flash)
+{
+  int fd, bytes;
 
   char antenna_name[10];
   fd = open("/sys/devices/wibe-antenna.4/antenna", O_WRONLY);
@@ -323,6 +524,32 @@ void antenna_select(uint8_t beam, bool flash)
   bytes = write(fd, antenna_name, strlen(antenna_name));
   assert(bytes > 0);
   close(fd);
+}
+
+static void antenna_led_off(void)
+{
+  const char *colours[] = {"red", "green"};
+  for (int c = 0; c < 2; ++c)
+  {
+    for (int i = 0; i < 4; ++i)
+    {
+      char filename[128];
+      snprintf(filename, 128, "/sys/class/leds/wibe:%s:%s/trigger", AntennaText[i], colours[c]);
+      int fd = open(filename, O_WRONLY);
+      assert(fd);
+      int bytes = write(fd, "none", 4);
+      assert(bytes == 4);
+      close(fd);
+    }
+  }
+}
+
+static void antenna_led_searching(void)
+{
+  int fd, bytes;
+  char antenna_name[10];
+
+  antenna_led_off();
 
   fd = open("/sys/devices/wibe-antenna.4/antenna", O_RDONLY);
   assert(fd);
@@ -331,28 +558,88 @@ void antenna_select(uint8_t beam, bool flash)
   antenna_name[bytes-1] = '\0'; // Remove \n
   close(fd);
 
-  snprintf(filename, 128, "/sys/class/leds/wibe:%s:green/trigger", antenna_name);
+  char filename[128];
+  snprintf(filename, 128, "/sys/class/leds/wibe:%s:red/trigger", antenna_name);
   fd = open(filename, O_WRONLY);
   assert(fd);
-  if (flash)
-    bytes = write(fd, "heartbeat", strlen("heartbeat"));
-  else
-    bytes = write(fd, "default-on", strlen("default-on"));
+  bytes = write(fd, "heartbeat", strlen("heartbeat"));
   assert(bytes > 0);
   close(fd);
 }
 
-enum SignalType {
-  TYPE_LTE,
-  TYPE_WCDMA,
-  TYPE_COUNT
-};
+static void antenna_led_testing(bool isLTE)
+{
+  int fd, bytes;
+  char antenna_name[10];
+  char filename[128];
+
+  antenna_led_off();
+
+  fd = open("/sys/devices/wibe-antenna.4/antenna", O_RDONLY);
+  assert(fd);
+  bytes = read(fd, &antenna_name, 10);
+  assert(bytes > 0);
+  antenna_name[bytes-1] = '\0'; // Remove \n
+  close(fd);
+
+  if (!isLTE)
+  {
+    snprintf(filename, 128, "/sys/class/leds/wibe:%s:red/trigger", antenna_name);
+    fd = open(filename, O_WRONLY);
+    assert(fd);
+    bytes = write(fd, "heartbeat", strlen("heartbeat"));
+    assert(bytes > 0);
+    close(fd);
+  }
+
+  snprintf(filename, 128, "/sys/class/leds/wibe:%s:green/trigger", antenna_name);
+  fd = open(filename, O_WRONLY);
+  assert(fd);
+  bytes = write(fd, "heartbeat", strlen("heartbeat"));
+  assert(bytes > 0);
+  close(fd);
+}
+
+static void antenna_led_selected(bool isLTE)
+{
+  int fd, bytes;
+  char antenna_name[10];
+  char filename[128];
+
+  antenna_led_off();
+
+  fd = open("/sys/devices/wibe-antenna.4/antenna", O_RDONLY);
+  assert(fd);
+  bytes = read(fd, &antenna_name, 10);
+  assert(bytes > 0);
+  antenna_name[bytes-1] = '\0'; // Remove \n
+  close(fd);
+
+  if (!isLTE)
+  {
+    snprintf(filename, 128, "/sys/class/leds/wibe:%s:red/trigger", antenna_name);
+    fd = open(filename, O_WRONLY);
+    assert(fd);
+    bytes = write(fd, "default-on", strlen("default-on"));
+    assert(bytes > 0);
+    close(fd);
+  }
+
+  snprintf(filename, 128, "/sys/class/leds/wibe:%s:green/trigger", antenna_name);
+  fd = open(filename, O_WRONLY);
+  assert(fd);
+  bytes = write(fd, "default-on", strlen("default-on"));
+  assert(bytes > 0);
+  close(fd);
+}
 
 struct AntennaResult {
   bool test_complete;
   struct tm test_time;
   enum SignalType type;
   uint8_t antenna;
+  //LAC
+  //CID
   int rssi;
   union {
     struct {
@@ -369,7 +656,7 @@ struct AntennaResult {
 #define ANTENNAS 4
 static struct AntennaResult antenna_results[TYPE_COUNT][ANTENNAS];
 
-void antenna_reset(void)
+static void antenna_reset(void)
 {
   for (size_t type = 0; type < TYPE_COUNT; ++type)
     for (size_t antenna = 0; antenna < ANTENNAS; ++antenna)
@@ -391,7 +678,7 @@ struct AntennaResult *antenna_max(struct AntennaResult *a,
   if (b->rssi > a->rssi)
     return b;
 
-  if (a->type == b->type && a->type == TYPE_WCDMA)
+  if (a->type == b->type && a->type == TypeWcdma)
   {
     if (a->ecio > b->ecio)
       return a;
@@ -399,7 +686,7 @@ struct AntennaResult *antenna_max(struct AntennaResult *a,
       return b;
   }
 
-  if (a->type == b->type && a->type == TYPE_LTE)
+  if (a->type == b->type && a->type == TypeLte)
   {
     if (a->rsrp > b->rsrp)
       return a;
@@ -407,16 +694,16 @@ struct AntennaResult *antenna_max(struct AntennaResult *a,
       return b;
   }
 
-  if (a->type == TYPE_LTE)
+  if (a->type == TypeLte)
     return a;
-  if (b->type == TYPE_LTE)
+  if (b->type == TypeLte)
     return b;
 
   syslog(LOG_WARNING, "Returning default in antenna_max");
   return a;
 }
 
-const struct AntennaResult *antenna_find_best(void)
+static const struct AntennaResult *antenna_find_best(void)
 {
   struct AntennaResult *best = NULL;
   for (size_t type = 0; type < TYPE_COUNT; ++type)
@@ -425,30 +712,55 @@ const struct AntennaResult *antenna_find_best(void)
   return best;
 }
 
-void antenna_test(void)
+static void antenna_test(const char *antenna_mode, bool isLTE)
 {
-  for (int antenna = 0; antenna < 4; ++antenna)
+  int antenna_start = 0;
+  int antenna_count = 4;
+
+  if (strcmp(antenna_mode, "detect"))
+  {
+    antenna_start = atoi(antenna_mode);
+    antenna_count = 1;
+  }
+
+  for (int antenna = antenna_start; antenna < antenna_count; ++antenna)
   {
     antenna_select(antenna, true);
+    antenna_led_searching();
     sleep(qmi_settings.settlewait);
+    struct QmiResponse *resp = NULL;
+    const char *reg_status = NULL;
     for (int timeout = qmi_settings.regtimeout; timeout > 0; --timeout)
     {
-      struct QmiResponse *resp = uqmi("--get-serving-system");
+      resp = uqmi("--get-serving-system");
       if (!uqmi_is_error(resp))
       {
-        const char *reg = uqmi_get_string(resp, "registration");
-        if (!strcmp(reg, "registered"))
+        reg_status = uqmi_get_string(resp, "registration");
+        if (!strcmp(reg_status, "registered"))
           break;
-        syslog(LOG_INFO, "Waiting for registration to complete: %s", reg);
-        sleep(1);
+        if (!strcmp(reg_status, "registering_denied"))
+          break;
+        syslog(LOG_INFO, "Waiting for registration to complete: %s", reg_status);
       }
       else
       {
-        syslog(LOG_INFO, "Waiting for registrtion to complete: %s", resp->error_string);
+        syslog(LOG_INFO, "Waiting for registration to complete: %s", resp->error_string);
       }
+      sleep(1);
     }
+
+    if (reg_status && strcmp(reg_status, "registered"))
+      continue;
+    uqmi_free(resp);
+
+    antenna_led_testing(isLTE);
+
     sleep(qmi_settings.settlewait);
-    struct QmiResponse *resp = uqmi("--get-signal-info");
+
+    // Update qmi_statsu (around here somewhere)
+    snmp_write_status();
+
+    resp = uqmi("--get-signal-info");
     if (!uqmi_is_error(resp))
     {
       const char *type = uqmi_get_string(resp, "type");
@@ -460,12 +772,12 @@ void antenna_test(void)
         int snr = uqmi_get_int(resp, "snr");
         syslog(LOG_INFO, "lte %d %d %d %d", rssi, rsrq, rsrp, snr);
         struct AntennaResult r = { .test_complete = true, .rssi = rssi, .rsrq = rsrq,
-                                   .rsrp = rsrp, .snr = snr, .type = TYPE_LTE,
+                                   .rsrp = rsrp, .snr = snr, .type = TypeLte,
                                    .antenna = antenna};
         time_t now;
         time(&now);
         memcpy(&r.test_time, localtime(&now), sizeof(struct tm));
-        memcpy(&antenna_results[TYPE_LTE][antenna], &r, sizeof(struct AntennaResult));
+        memcpy(&antenna_results[TypeLte][antenna], &r, sizeof(struct AntennaResult));
       }
       else if (!strcmp(type, "wcdma"))
       {
@@ -473,12 +785,12 @@ void antenna_test(void)
         int ecio = uqmi_get_int(resp, "ecio");
         syslog(LOG_INFO, "wcdma %d %d", rssi, ecio);
         struct AntennaResult r = { .test_complete = true, .rssi = rssi,
-                                   .ecio = ecio, .type = TYPE_WCDMA,
+                                   .ecio = ecio, .type = TypeWcdma,
                                    .antenna = antenna};
         time_t now;
         time(&now);
         memcpy(&r.test_time, localtime(&now), sizeof(struct tm));
-        memcpy(&antenna_results[TYPE_WCDMA][antenna], &r, sizeof(struct AntennaResult));
+        memcpy(&antenna_results[TypeWcdma][antenna], &r, sizeof(struct AntennaResult));
       }
       else
       {
@@ -494,7 +806,7 @@ void antenna_test(void)
 
 static char cid[32];
 
-void modem_disconnect(void)
+static void modem_disconnect(void)
 {
   uqmi_free(uqmi("--stop-network 0xffffffff --autoconnect"));
 
@@ -504,7 +816,7 @@ void modem_disconnect(void)
   uqmi_free(uqmi(cmd));
 }
 
-void sig_handler(int sig)
+static void sig_handler(int sig)
 {
   if (sig == SIGINT)
   {
@@ -522,7 +834,7 @@ void sig_handler(int sig)
   }
 }
 
-void net_renew_lease(void)
+static void net_renew_lease(void)
 {
   int fd = open("/var/run/udhcpc-wwan0.pid", O_RDONLY);
   if (fd < 0)
@@ -554,6 +866,166 @@ void net_renew_lease(void)
   system(cmd);
 }
 
+static const char* provider_get_value(struct uci_section *section, const char *name)
+{
+  struct uci_element *element;
+  struct uci_option  *option;
+
+  uci_foreach_element(&section->options, element)
+  {
+    if (element->type == UCI_TYPE_OPTION)
+    {
+      option = uci_to_option(element);
+      if (!strcmp(name, element->name))
+        return strdup(option->v.string);
+    }
+  }
+
+  return NULL;
+}
+
+static int provider_matches_imsi(struct uci_section *section, const char *imsi)
+{
+  struct uci_option  *option;
+  struct uci_element *element, *list_el;
+
+  uci_foreach_element(&section->options, element)
+  {
+    if (element->type == UCI_TYPE_OPTION)
+    {
+      option = uci_to_option(element);
+
+      if (!strcmp(element->name, "network") && option->type == UCI_TYPE_LIST)
+      {
+        uci_foreach_element(&option->v.list, list_el)
+        {
+          if (strlen(list_el->name) > 0 && !strncmp(imsi, list_el->name, strlen(list_el->name)))
+            return 1;
+        }
+      }
+    }
+  }
+
+  return 0;
+}
+
+static void sim_apn_add(struct ApnItem *apn)
+{
+  if (!apn_list)
+  {
+    apn_list = apn;
+    return;
+  }
+
+  struct ApnItem *last = apn_list;
+  while (last && last->next)
+    last = last->next;
+  last->next = apn;
+}
+
+static void sim_apn_generate_list_from_section(const char* section_name)
+{
+  struct uci_context *context = NULL;
+  struct uci_package *package;
+  struct uci_element *e;
+  struct uci_section *section;
+
+  struct QmiResponse *resp = uqmi("--get-imsi");
+  if (!uqmi_is_error(resp))
+  {
+    syslog(LOG_WARNING, "Could not get IMSI");
+    uqmi_free(resp);
+    return;
+  }
+  char *imsi = strdup(resp->error_string);
+  uqmi_free(resp);
+
+  context = uci_alloc_context();
+  if (!context)
+    return;
+
+  if (uci_load(context, section_name, &package) != UCI_OK)
+  {
+    uci_free_context(context);
+    return;
+  }
+
+  uci_foreach_element(&package->sections, e)
+  {
+    section = uci_to_section(e);
+
+    if (provider_matches_imsi(section, imsi))
+    {
+      struct ApnItem *apn = malloc(sizeof(*apn));
+      if (!apn)
+        exit(-1);
+      bzero(apn, sizeof(struct ApnItem));
+      apn->apn = provider_get_value(section, "apn");
+      apn->username = provider_get_value(section, "username");
+      apn->password = provider_get_value(section, "password");
+      sim_apn_add(apn);
+    }
+  }
+
+  free(imsi);
+}
+
+static void sim_apn_generate_list(void)
+{
+  sim_apn_generate_list_from_section("myproviders");
+  sim_apn_generate_list_from_section("providers");
+}
+
+static void uqmi_data_connect(void)
+{
+  char connect_command[256];
+
+  struct ApnItem *apn = apn_list;
+
+  bool connected = false;
+  while (apn)
+  {
+    syslog(LOG_INFO, "Attempting to connect with APN: %s", apn->apn);
+    for (int i = 0; i < qmi_settings.settlewait; ++i)
+    {
+      struct QmiResponse *resp = uqmi("--get-data-status");
+      if (!strcmp(resp->error_string, "disconnected"))
+        break;
+      sleep(1);
+    }
+    uqmi_free(uqmi("--stop-network 0xffffffff --autoconnect"));
+    snprintf(connect_command, sizeof(connect_command),
+             "--set-client-id wds,\"%s\" --start-network \"%s\" %s %s %s %s "
+             "--autoconnect ", cid, apn->apn,
+             (apn->username && strlen(apn->username) > 0) ? "--username" : "",
+             (apn->username && strlen(apn->username) > 0) ? apn->username : "",
+             (apn->password && strlen(apn->password) > 0) ? "--password" : "",
+             (apn->password && strlen(apn->password) > 0) ? apn->password : "");
+    struct QmiResponse *resp = uqmi(connect_command);
+    uqmi_free(resp);
+
+    for (int i = 0; i < qmi_settings.settlewait; ++i)
+    {
+      struct QmiResponse *resp = uqmi("--get-data-status");
+      if (!strcmp(resp->error_string, "connected"))
+      {
+        syslog(LOG_INFO, "Connected with APN: %s", apn->apn);
+        qmi_status.apn = apn;
+        net_renew_lease();
+        connected = true;
+        break;
+      }
+      sleep(1);
+    }
+    if (connected)
+      break;
+
+    apn = apn->next;
+  }
+
+  syslog(LOG_INFO, "Could not find a working APN");
+}
+
 int main(int argc, char **argv)
 {
   openlog("umtsd", LOG_PERROR, LOG_DAEMON);
@@ -565,6 +1037,10 @@ int main(int argc, char **argv)
   if (signal(SIGINT, sig_handler) == SIG_ERR)
     syslog(LOG_ERR, "Failed to register SIGINT handler");
 
+  // Setup qmi_status
+  qmi_clear_status();
+  snmp_write_status();
+
   if (!load_settings())
   {
     syslog(LOG_ERR, "Invalid WAN settings for QMI");
@@ -572,21 +1048,36 @@ int main(int argc, char **argv)
   }
   print_settings();
 
-  if (!modem_is_present())
+  uqmi_power(true);
+  sleep(5);
+  while (!modem_is_present())
   {
-    syslog(LOG_ERR, "Device %s is not a character device", qmi_settings.device);
-    uqmi_reset();
-    exit(1);
+    syslog(LOG_ERR, "Device %s is not a character device, waiting", qmi_settings.device);
+    sleep(5);
   }
+
+  while (!sim_is_present())
+  {
+    // Update qmi_status
+    snmp_write_status();
+    led_3g_red(true);
+    sleep(1);
+  };
 
   struct QmiResponse *resp = uqmi("--get-pin-status");
   if (uqmi_is_error(resp))
   {
+    // update qmi_status
+    snmp_write_status();
     syslog(LOG_WARNING, "SIM is not initialised");
-    if (sim_is_present())
-      uqmi_reset();
+    uqmi_reset();
+    exit(1);
   }
   uqmi_free(resp);
+  led_3g_red(false);
+
+  // Update qmi_statsu
+  snmp_write_status();
 
   if (strlen(qmi_settings.pincode))
   {
@@ -608,16 +1099,11 @@ int main(int argc, char **argv)
   {
     uqmi_free(uqmi("--set-network-modes lte"));
     net_renew_lease();
-    if (!strcmp(qmi_settings.antenna, "detect"))
-      antenna_test();
-    else
-      antenna_select(atoi(qmi_settings.antenna), false);
+    antenna_test(qmi_settings.antenna, true);
+
     uqmi_free(uqmi("--set-network-modes umts"));
     net_renew_lease();
-    if (!strcmp(qmi_settings.antenna, "detect"))
-      antenna_test();
-    else
-      antenna_select(atoi(qmi_settings.antenna), false);
+    antenna_test(qmi_settings.antenna, false);
   }
   else
   {
@@ -625,22 +1111,19 @@ int main(int argc, char **argv)
     snprintf(cmd, sizeof(cmd), "--set-network-modes %s", qmi_settings.modes);
     uqmi_free(uqmi(cmd));
     net_renew_lease();
-    if (!strcmp(qmi_settings.antenna, "detect"))
-      antenna_test();
-    else
-      antenna_select(atoi(qmi_settings.antenna), false);
+    antenna_test(qmi_settings.antenna, !strcmp(qmi_settings.modes, "lte"));
   }
 
   const struct AntennaResult *antenna = antenna_find_best();
   if (!strcmp(qmi_settings.modes, "detect"))
   {
-    if (antenna->type == TYPE_LTE)
+    if (antenna->type == TypeLte)
     {
       syslog(LOG_INFO, "Selecting LTE mode");
       uqmi_free(uqmi("--set-network-modes lte"));
       net_renew_lease();
     }
-    else if (antenna->type == TYPE_WCDMA)
+    else if (antenna->type == TypeWcdma)
     {
       syslog(LOG_INFO, "Selecting WCDMA mode");
       uqmi_free(uqmi("--set-network-modes umts"));
@@ -652,6 +1135,7 @@ int main(int argc, char **argv)
   {
     syslog(LOG_INFO, "Selecting antenna %d", antenna->antenna);
     antenna_select(antenna->antenna, false);
+    antenna_led_selected(antenna->type == TypeLte);
   }
 
   resp = uqmi("--get-client-id wds");
@@ -664,29 +1148,34 @@ int main(int argc, char **argv)
   strncpy(cid, resp->response_string, sizeof(cid));
   uqmi_free(resp);
 
-  char connect_command[256];
+  sim_apn_generate_list();
+  uqmi_data_connect();
 
-  snprintf(connect_command, sizeof(connect_command),
-           "--set-client-id wds,\"%s\" --start-network \"%s\" %s %s %s %s"
-           "--autoconnect ", cid, qmi_settings.apn,
-           (strlen(qmi_settings.username) != 0) ? "--username" : "", qmi_settings.username,
-           (strlen(qmi_settings.password) != 0) ? "--password" : "", qmi_settings.password);
-  uqmi_free(uqmi(connect_command));
-  sleep(qmi_settings.settlewait);
+  // Update qmi_statsu
+  snmp_write_status();
 
-  while (1)
+  while (true)
   {
-    resp =  uqmi("--get-data-status");
+    if (!sim_is_present())
+    {
+      led_3g_red(true);
+      exit(1);
+    }
+
+    resp = uqmi("--get-data-status");
     fprintf(stderr, "%s", resp->error_string);
     if (strcmp(resp->error_string, "connected"))
     {
       uqmi_free(resp);
       sleep(qmi_settings.settlewait);
-      resp =  uqmi("--get-data-status");
+      resp = uqmi("--get-data-status");
       if (strcmp(resp->error_string, "connected"))
         break;
     }
     sleep(1);
+
+    // Update qmi_statsu
+    snmp_write_status();
   }
 
   syslog(LOG_INFO, "Data connection lost, restarting umtsd...");
