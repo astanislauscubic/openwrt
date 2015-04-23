@@ -304,9 +304,12 @@ ramips_setup_macs()
 		wan_mac=$(mtd_get_mac_binary factory 46)
 		;;
 	wibe-4g)
-#    wan_mac="DE:74:66:80:B9:5D"
-		;;
-
+		lan_mac=$(mtd_get_mac_binary factory 40)
+		wan_mac=$(mtd_get_mac_binary factory 46)
+    if [ "${lan_mac}" == "${wan_mac}" ]; then
+      wan_mac=$(macaddr_add "$wan_mac" 2)
+    fi
+    ;;
 	*)
 		lan_mac=$(cat /sys/class/net/eth0/address)
 		wan_mac=$(macaddr_add "$lan_mac" 1)
