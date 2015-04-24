@@ -16,9 +16,6 @@
 struct QmiSettings {
   char proto[8];
   char device[128];
-  char apn[128];
-  char username[128];
-  char password[128];
   char pincode[32];
   char modes[16];
   char antenna[16];
@@ -31,9 +28,6 @@ static void print_settings(void)
 {
   fprintf(stderr, "Protocol:    %s\n", qmi_settings.proto);
   fprintf(stderr, "Device:      %s\n", qmi_settings.device);
-  fprintf(stderr, "APN:         %s\n", qmi_settings.apn);
-  fprintf(stderr, "Username:    %s\n", qmi_settings.username);
-  fprintf(stderr, "Password:    %s\n", qmi_settings.password);
   fprintf(stderr, "Pincode:     %s\n", qmi_settings.pincode);
   fprintf(stderr, "Modes:       %s\n", qmi_settings.modes);
   fprintf(stderr, "Antenna:     %s\n", qmi_settings.antenna);
@@ -141,16 +135,13 @@ static const char *AntennaText[] = {
   [UnknownBeam] = "unknown"
 };
 
-struct QmiStatus {
-  const char *imei;
-  const char *imsi;
-  const char *msisdn;
-  int cid;
-  int lac;
-  enum SimStatus sim_status;
-  enum Registration wan_status;
-  enum Antenna active_antenna;
-  enum SignalType signal_type;
+struct AntennaResult {
+  bool test_complete;
+  struct tm test_time;
+  enum SignalType type;
+  uint8_t antenna;
+  //LAC
+  //CID
   int rssi;
   union {
     struct {
@@ -162,6 +153,20 @@ struct QmiStatus {
       int snr;
     };
   };
+};
+
+struct QmiStatus {
+  const char *imei;
+  const char *imsi;
+  const char *msisdn;
+  int cid;
+  int lac;
+  enum SimStatus sim_status;
+  enum Registration wan_status;
+  enum Antenna active_antenna;
+  enum SignalType signal_type;
+  int rssi;
+  struct AntennaResult antenna_stats;
   struct ApnItem *apn;
   bool changed;
 };
@@ -180,15 +185,42 @@ static void qmi_clear_status(void)
   qmi_status.active_antenna = UnknownBeam;
   qmi_status.signal_type = TypeUnknown;
 
-  qmi_status.rssi = -999;
-  qmi_status.ecio = -999;
-  qmi_status.rsrp = -999;
-  qmi_status.rsrq = -999;
-  qmi_status.snr = -999;
+  qmi_status.antenna_stats.test_complete = false;
 
   qmi_status.apn = NULL;
 
   qmi_status.changed = true;
+}
+
+static void luci_write_status(void)
+{
+  FILE *lucifile = fopen("/tmp/wibe_luci", "w");
+
+  fprintf(lucifile, "local qmi={}\n");
+  fprintf(lucifile, "qmi.service=\"%s\"\n", SignalTypeText[qmi_status.signal_type]);
+  fprintf(lucifile, "qmi.imsi=\"%s\"\n", qmi_status.imsi);
+  fprintf(lucifile, "qmi.imei=\"%s\"\n", qmi_status.imei);
+  fprintf(lucifile, "qmi.msisdn=\"%s\"\n", qmi_status.msisdn);
+  fprintf(lucifile, "qmi.antenna=\"%s\"\n", AntennaText[qmi_status.active_antenna]);
+  fprintf(lucifile, "qmi.rssi=\"%d\"\n", qmi_status.antenna_stats.rssi);
+  if (qmi_status.signal_type == TypeLte)
+  {
+    fprintf(lucifile, "qmi.ecio=\"N/A\"\n");
+    fprintf(lucifile, "qmi.rsrp=\"%d\"\n", qmi_status.antenna_stats.rsrp);
+    fprintf(lucifile, "qmi.rsrq=\"%d\"\n", qmi_status.antenna_stats.rsrq);
+    fprintf(lucifile, "qmi.snr=\"%d\"\n", qmi_status.antenna_stats.snr);
+  }
+  else if (qmi_status.signal_type == TypeWcdma)
+  {
+    fprintf(lucifile, "qmi.ecio=\"%d\"\n", qmi_status.antenna_stats.ecio);
+    fprintf(lucifile, "qmi.rsrp=\"N/A\"\n");
+    fprintf(lucifile, "qmi.rsrq=\"N/A\"\n");
+    fprintf(lucifile, "qmi.snr=\"N/A\"\n");
+  }
+  fprintf(lucifile, "return qmi\n");
+
+
+  fclose(lucifile);
 }
 
 static void snmp_write_status(void)
@@ -196,6 +228,7 @@ static void snmp_write_status(void)
   if (!qmi_status.changed)
     return;
 
+  luci_write_status();
   FILE *snmpfile = fopen("/tmp/wibe_snmp", "w");
   assert(snmpfile);
 
@@ -218,16 +251,20 @@ static void snmp_write_status(void)
   snmp_write_int(snmpfile, "1S259.0", qmi_status.wan_status);
   snmp_write_string(snmpfile, "1S258.0", RegistrationText[qmi_status.wan_status]);
 
-  snmp_write_int(snmpfile, "1S261.0", qmi_status.rssi);
-  if (qmi_status.signal_type == TypeLte)
+  if (qmi_status.antenna_stats.test_complete)
   {
-    snmp_write_int(snmpfile, "1S265.0", qmi_status.rsrp);
-    snmp_write_int(snmpfile, "1S266.0", qmi_status.rsrq);
-    snmp_write_int(snmpfile, "1S267.0", qmi_status.snr);
-  }
-  else if (qmi_status.signal_type == TypeWcdma)
-  {
-    snmp_write_int(snmpfile, "1S262.0", qmi_status.ecio);
+    struct AntennaResult *result = &qmi_status.antenna_stats;
+    snmp_write_int(snmpfile, "1S261.0", result->rssi);
+    if (qmi_status.signal_type == TypeLte)
+    {
+      snmp_write_int(snmpfile, "1S265.0", result->rsrp);
+      snmp_write_int(snmpfile, "1S266.0", result->rsrq);
+      snmp_write_int(snmpfile, "1S267.0", result->snr);
+    }
+    else if (qmi_status.signal_type == TypeWcdma)
+    {
+      snmp_write_int(snmpfile, "1S262.0", result->ecio);
+    }
   }
 
   snmp_write_string(snmpfile, "1S264.0", SignalTypeText[qmi_status.signal_type]);
@@ -288,13 +325,6 @@ static int load_settings(void)
   if (!uci_get_string("network.wan.device", qmi_settings.device,
                       sizeof(qmi_settings.device)))
     return 0;
-  if (!uci_get_string("network.wan.apn", qmi_settings.apn,
-                      sizeof(qmi_settings.apn)))
-    return 0;
-  uci_get_string_default("network.wan.username", qmi_settings.username,
-                         sizeof(qmi_settings.username), "");
-  uci_get_string_default("network.wan.password", qmi_settings.password,
-                         sizeof(qmi_settings.password), "");
   uci_get_string_default("network.wan.pincode", qmi_settings.pincode,
                          sizeof(qmi_settings.pincode), "");
   uci_get_string_default("network.wan.modes", qmi_settings.modes,
@@ -641,26 +671,6 @@ static void antenna_led_selected(bool isLTE)
   close(fd);
 }
 
-struct AntennaResult {
-  bool test_complete;
-  struct tm test_time;
-  enum SignalType type;
-  uint8_t antenna;
-  //LAC
-  //CID
-  int rssi;
-  union {
-    struct {
-      int ecio;
-    };
-    struct {
-      int rsrq;
-      int rsrp;
-      int snr;
-    };
-  };
-};
-
 #define ANTENNAS 4
 static struct AntennaResult antenna_results[TypeCount][ANTENNAS];
 
@@ -720,6 +730,54 @@ static const struct AntennaResult *antenna_find_best(void)
   return best;
 }
 
+static void antenna_log(const struct AntennaResult *const result)
+{
+  if (!result->test_complete)
+    return;
+  if (result->type == TypeLte)
+      syslog(LOG_INFO, "LTE:%s RSSI:%d RSRQ:%d RSRP:%d SNR:%d",
+             AntennaText[result->antenna], result->rssi, result->rsrq,
+             result->rsrp, result->snr);
+  else if (result->type == TypeWcdma)
+      syslog(LOG_INFO, "WCDMA:%s RSSI:%d ECIO:%d",
+             AntennaText[result->antenna], result->rssi, result->ecio);
+}
+
+static void antenna_get_stats(struct AntennaResult *const result, enum Antenna antenna)
+{
+  time_t now;
+  time(&now);
+  memcpy(&result->test_time, localtime(&now), sizeof(struct tm));
+  result->test_complete = false;
+  result->antenna = antenna;
+
+  struct QmiResponse *resp = uqmi("--get-signal-info");
+  if (!uqmi_is_error(resp))
+  {
+    const char *type = uqmi_get_string(resp, "type");
+    if (!strcmp(type, "lte"))
+    {
+      result->rssi = uqmi_get_int(resp, "rssi");
+      result->rsrq = uqmi_get_int(resp, "rsrq");
+      result->rsrp = uqmi_get_int(resp, "rsrp");
+      result->snr = uqmi_get_int(resp, "snr");
+      result->test_complete = true;
+      result->type = TypeLte;
+    }
+    else if (!strcmp(type, "wcdma"))
+    {
+      result->rssi = uqmi_get_int(resp, "rssi");
+      result->ecio = uqmi_get_int(resp, "ecio");
+      result->type = TypeWcdma;
+      result->test_complete = true;
+    }
+    else
+      syslog(LOG_INFO, "Unexpected signal type: %s", type);
+  }
+  else
+    syslog(LOG_INFO, "Error reading signal info: %s", resp->error_string);
+}
+
 static void antenna_test(const char *antenna_mode, bool isLTE)
 {
   int antenna_start = 0;
@@ -768,47 +826,12 @@ static void antenna_test(const char *antenna_mode, bool isLTE)
     // Update qmi_statsu (around here somewhere)
     snmp_write_status();
 
-    resp = uqmi("--get-signal-info");
-    if (!uqmi_is_error(resp))
-    {
-      const char *type = uqmi_get_string(resp, "type");
-      if (!strcmp(type, "lte"))
-      {
-        int rssi = uqmi_get_int(resp, "rssi");
-        int rsrq = uqmi_get_int(resp, "rsrq");
-        int rsrp = uqmi_get_int(resp, "rsrp");
-        int snr = uqmi_get_int(resp, "snr");
-        syslog(LOG_INFO, "lte %d %d %d %d", rssi, rsrq, rsrp, snr);
-        struct AntennaResult r = { .test_complete = true, .rssi = rssi, .rsrq = rsrq,
-                                   .rsrp = rsrp, .snr = snr, .type = TypeLte,
-                                   .antenna = antenna};
-        time_t now;
-        time(&now);
-        memcpy(&r.test_time, localtime(&now), sizeof(struct tm));
-        memcpy(&antenna_results[TypeLte][antenna], &r, sizeof(struct AntennaResult));
-      }
-      else if (!strcmp(type, "wcdma"))
-      {
-        int rssi = uqmi_get_int(resp, "rssi");
-        int ecio = uqmi_get_int(resp, "ecio");
-        syslog(LOG_INFO, "wcdma %d %d", rssi, ecio);
-        struct AntennaResult r = { .test_complete = true, .rssi = rssi,
-                                   .ecio = ecio, .type = TypeWcdma,
-                                   .antenna = antenna};
-        time_t now;
-        time(&now);
-        memcpy(&r.test_time, localtime(&now), sizeof(struct tm));
-        memcpy(&antenna_results[TypeWcdma][antenna], &r, sizeof(struct AntennaResult));
-      }
-      else
-      {
-        syslog(LOG_INFO, "Unexpected signal type: %s", type);
-      }
-    }
-    else
-    {
-      syslog(LOG_INFO, "Error reading signal info: %s", resp->error_string);
-    }
+    struct AntennaResult result;
+    antenna_get_stats(&result, antenna);
+    antenna_log(&result);
+    memcpy(&antenna_results[result.type][result.antenna], &result, sizeof(struct AntennaResult));
+    if (result.test_complete)
+      memcpy(&qmi_status.antenna_stats, &result, sizeof(struct AntennaResult));
   }
 }
 
@@ -912,6 +935,11 @@ static bool provider_matches_imsi(struct uci_section *section, const char *imsi)
             return true;
         }
       }
+      else if (!strcmp(element->name, "network") && option->type == UCI_TYPE_STRING)
+      {
+        if (strlen(option->v.string) > 0 && !strncmp(imsi, option->v.string, strlen(option->v.string)))
+          return true;
+      }
     }
   }
 
@@ -920,6 +948,7 @@ static bool provider_matches_imsi(struct uci_section *section, const char *imsi)
 
 static void sim_apn_add(struct ApnItem *apn)
 {
+  fprintf(stderr, "New APN: %s %s %s\n", apn->apn, apn->username, apn->password);
   if (!apn_list)
   {
     apn_list = apn;
@@ -1017,6 +1046,7 @@ static void uqmi_data_connect(void)
       sleep(1);
     }
     uqmi_free(uqmi("--stop-network 0xffffffff --autoconnect"));
+    sleep(qmi_settings.settlewait);
     snprintf(connect_command, sizeof(connect_command),
              "--set-client-id wds,\"%s\" --start-network \"%s\" %s %s %s %s "
              "--autoconnect ", cid, apn->apn,
@@ -1025,29 +1055,39 @@ static void uqmi_data_connect(void)
              (apn->password && strlen(apn->password) > 0) ? "--password" : "",
              (apn->password && strlen(apn->password) > 0) ? apn->password : "");
     struct QmiResponse *resp = uqmi(connect_command);
-    uqmi_free(resp);
-
-    for (int i = 0; i < qmi_settings.settlewait; ++i)
+    if (uqmi_is_error(resp))
     {
-      struct QmiResponse *resp = uqmi("--get-data-status");
-      if (!strcmp(resp->error_string, "connected"))
-      {
-        syslog(LOG_INFO, "Connected with APN: %s", apn->apn);
-        qmi_status.apn = apn;
-        uqmi_save_apn(qmi_status.imsi, apn);
-        net_renew_lease();
-        connected = true;
-        break;
-      }
-      sleep(1);
+      syslog(LOG_INFO, "Failed to connect with APN: %s", apn->apn);
+      uqmi_free(resp);
     }
-    if (connected)
-      break;
+    else
+    {
+      uqmi_free(resp);
 
+      for (int i = 0; i < qmi_settings.settlewait; ++i)
+      {
+        resp = uqmi("--get-data-status");
+        if (!strcmp(resp->error_string, "connected"))
+        {
+          uqmi_free(resp);
+          syslog(LOG_INFO, "Connected with APN: %s", apn->apn);
+          qmi_status.apn = apn;
+          uqmi_save_apn(qmi_status.imsi, apn);
+          net_renew_lease();
+          connected = true;
+          break;
+        }
+        sleep(1);
+      }
+      if (connected)
+        break;
+
+    }
     apn = apn->next;
   }
 
-  syslog(LOG_INFO, "Could not find a working APN");
+  if (!connected)
+    syslog(LOG_INFO, "Could not find a working APN");
 }
 
 static const char* qmi_get_error_response(const char *argument)
@@ -1129,6 +1169,8 @@ int main(int argc, char **argv)
   SET_STATUS(msisdn, qmi_get_error_response("--get-msisdn"));
   snmp_write_status();
 
+  sim_apn_generate_list();
+
   if (strlen(qmi_settings.pincode))
   {
     char cmd[64];
@@ -1207,6 +1249,9 @@ int main(int argc, char **argv)
       led_3g_red(true);
       exit(1);
     }
+
+    antenna_get_stats(&qmi_status.antenna_stats, qmi_status.active_antenna);
+    qmi_status.changed = true;
 
     resp = uqmi("--get-data-status");
     fprintf(stderr, "%s", resp->error_string);
