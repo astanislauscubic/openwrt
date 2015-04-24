@@ -1,5 +1,12 @@
 #!/bin/sh /etc/rc.common
 
+EXTRA_COMMANDS="lucistat"
+EXTRA_HELP="lucistat  Get status information if lua friendly format"
+
+lucistat() {
+  cat /tmp/wibe_luci
+}
+
 boot() {
   return 0
 }

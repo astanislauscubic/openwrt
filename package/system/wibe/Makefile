@@ -19,6 +19,7 @@ endef
 define Package/wibe/conffiles
 /etc/uci-defaults/00_password
 /etc/uci-defaults/03_wifi
+/etc/config/myproviders
 endef
 
 define Package/wibe/description
@@ -47,6 +48,7 @@ endef
 define Package/wibe/install
 	mkdir -p $(1)/etc/uci-defaults
 	$(INSTALL_DIR) $(1)/sbin/
+	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_DIR) $(1)/etc/init.d/
 	$(INSTALL_DIR) $(1)/usr/share/umtsd/
 
@@ -54,6 +56,7 @@ define Package/wibe/install
 	$(CP) ./files/usr/share/umtsd/umtsd.sh $(1)/usr/share/umtsd/umtsd.sh
 	$(CP) ./files/etc/uci-defaults/00_password $(1)/etc/uci-defaults/
 	$(CP) ./files/etc/uci-defaults/03_wifi $(1)/etc/uci-defaults
+	$(CP) ./files/etc/config/myproviders $(1)/etc/config/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/umtsd $(1)/sbin/umtsd
 	$(STRIP) $(1)/sbin/umtsd
 endef
