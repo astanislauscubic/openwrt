@@ -139,9 +139,8 @@ set network.wan.proto='qmi'
 set network.wan.device='/dev/cdc-wdm0'
 set network.wan.modes='detect'
 set network.wan.antenna='detect'
-set network.wan.apn='everywhere'
-set network.wan.regtimeout='60'
-set network.wan.settlewait='10'
+set network.wan.regtimeout='10'
+set network.wan.settlewait='5'
 EOF
 		;;
 	ur-336un)
