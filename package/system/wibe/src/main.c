@@ -203,7 +203,6 @@ struct QmiStatus {
   QmiWdsConnectionStatus packet_status;
   uint32_t packet_data_handle;
   int rssi;
-  int8_t selected_beam;
   struct AntennaResult antenna_stats;
   struct ApnItem *apn;
   bool changed;
@@ -1767,41 +1766,10 @@ void print_antenna(struct AntennaResult *antenna)
 static int antenna_loops = 0;
 const int antenna_loops_max = 0;
 
-enum State {
-  StateStartup;
-}
-
-enum State current_state;
-
 gboolean main_check(gpointer data)
 {
   if (!nas_client || !wds_client)
     return TRUE;
-
-  enum State next_state
-
-  switch (current_state)
-  {
-    case StateStartup:
-      next_state = StateFindBest;
-      break;
-    case StateFindBest:
-      antenna_reset();
-      qmi_status.selected_beam = 0;
-      next_state = StateNextBeam;
-      break;
-    case StateNextBeam:
-      antenna_select(qmi_status.selected_beam, true);
-      memset(&qmi_status.antenna_stats, 0, sizeof(struct AntennaResult));
-      antenna_led_searching();
-      next_state = StateWaitForBeam;
-      break;
-    case StateWaitForBeam:
-      if (qmi_status.antenna_stats.test_complete)
-        next_state = StateSaveResults;
-      break;
-    case StateSaveResults:
-
 
   if (antenna_testing == 0)
   {
