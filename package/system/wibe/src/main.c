@@ -38,8 +38,6 @@ void *uqmi()
 static void stop_network(void);
 static void start_network(void);
 
-static uint8_t antenna_testing = 0;
-
 static GCancellable *cancellable;
 static QmiDevice *device;
 static QmiClientDms *dms_client;
@@ -206,6 +204,7 @@ struct QmiStatus {
   struct AntennaResult antenna_stats;
   struct ApnItem *apn;
   bool changed;
+  time_t registration_start;
 };
 static struct QmiStatus qmi_status;
 
@@ -399,15 +398,15 @@ static void uqmi_power(bool powerOn)
   close(fd);
 }
 
-/*static void uqmi_reset(void)*/
-/*{*/
-  /*uqmi_power(false);*/
-  /*sleep(1);*/
-  /*uqmi_power(true);*/
+static void uqmi_reset(void)
+{
+  uqmi_power(false);
+  sleep(1);
+  uqmi_power(true);
 
-  /*while (!modem_is_present())*/
-    /*sleep(1);*/
-/*}*/
+  while (!modem_is_present())
+    sleep(1);
+}
 
 static bool sim_is_present(void)
 {
@@ -506,7 +505,7 @@ static void antenna_led_searching(void)
   close(fd);
 }
 
-static void antenna_led_testing(bool isLTE)
+void antenna_led_testing(bool isLTE)
 {
   int fd, bytes;
   char antenna_name[10];
@@ -647,108 +646,9 @@ static void antenna_log(const struct AntennaResult *const result)
              AntennaText[result->antenna], result->rssi, result->ecio);
 }
 
-static void antenna_get_stats(struct AntennaResult *const result, enum Antenna antenna)
-{
-  time_t now;
-  time(&now);
-  memcpy(&result->test_time, localtime(&now), sizeof(struct tm));
-  result->test_complete = false;
-  result->antenna = antenna;
-
-  g_assert(!"Get signal info");
-  /*struct QmiResponse *resp = uqmi("--get-signal-info");*/
-  /*if (!uqmi_is_error(resp))*/
-  /*{*/
-    /*const char *type = uqmi_get_string(resp, "type");*/
-    /*if (!strcmp(type, "lte"))*/
-    /*{*/
-      /*result->rssi = uqmi_get_int(resp, "rssi");*/
-      /*result->rsrq = uqmi_get_int(resp, "rsrq");*/
-      /*result->rsrp = uqmi_get_int(resp, "rsrp");*/
-      /*result->snr = uqmi_get_int(resp, "snr");*/
-      /*result->test_complete = true;*/
-      /*result->type = TypeLte;*/
-    /*}*/
-    /*else if (!strcmp(type, "wcdma"))*/
-    /*{*/
-      /*result->rssi = uqmi_get_int(resp, "rssi");*/
-      /*result->ecio = uqmi_get_int(resp, "ecio");*/
-      /*result->type = TypeWcdma;*/
-      /*result->test_complete = true;*/
-    /*}*/
-    /*else*/
-      /*syslog(LOG_INFO, "Unexpected signal type: %s", type);*/
-  /*}*/
-  /*else*/
-    /*syslog(LOG_INFO, "Error reading signal info: %s", resp->error_string);*/
-}
-
-static void antenna_test(const char *antenna_mode, bool isLTE)
-{
-  int antenna_start = 0;
-  int antenna_count = 4;
-
-  if (strcmp(antenna_mode, "detect"))
-  {
-    antenna_start = atoi(antenna_mode);
-    antenna_count = 1;
-  }
-
-  for (int antenna = antenna_start; antenna < antenna_count; ++antenna)
-  {
-    antenna_select(antenna, true);
-    antenna_led_searching();
-    sleep(qmi_settings.settlewait);
-    /*struct QmiResponse *resp = NULL;*/
-    const char *reg_status = NULL;
-    for (int timeout = qmi_settings.regtimeout; timeout > 0; --timeout)
-    {
-      g_assert(!"Get serving system");
-      /*resp = uqmi("--get-serving-system");*/
-      /*if (!uqmi_is_error(resp))*/
-      /*{*/
-        /*reg_status = uqmi_get_string(resp, "registration");*/
-        /*if (!strcmp(reg_status, "registered"))*/
-          /*break;*/
-        /*if (!strcmp(reg_status, "registering_denied"))*/
-          /*break;*/
-        /*syslog(LOG_INFO, "Waiting for registration to complete: %s", reg_status);*/
-      /*}*/
-      /*else*/
-      /*{*/
-        /*syslog(LOG_INFO, "Waiting for registration to complete: %s", resp->error_string);*/
-      /*}*/
-      /*sleep(1);*/
-    }
-
-    if (reg_status && strcmp(reg_status, "registered"))
-      continue;
-
-    antenna_led_testing(isLTE);
-
-    sleep(qmi_settings.settlewait);
-
-    // Update qmi_statsu (around here somewhere)
-    snmp_write_status();
-
-    struct AntennaResult result;
-    antenna_get_stats(&result, antenna);
-    antenna_log(&result);
-    memcpy(&antenna_results[result.type][result.antenna], &result, sizeof(struct AntennaResult));
-    if (result.test_complete)
-      memcpy(&qmi_status.antenna_stats, &result, sizeof(struct AntennaResult));
-  }
-}
-
 static void modem_disconnect(void)
 {
-  g_assert(!"Stop network");
-  /*uqmi_free(uqmi("--stop-network 0xffffffff --autoconnect"));*/
-
-  /*char cmd[128];*/
-  /*snprintf(cmd, sizeof(cmd),*/
-           /*"--set-client-id wds,\"%s\" --release-client-id wds", cid);*/
-  /*uqmi_free(uqmi(cmd));*/
+  stop_network();
 }
 
 static void sig_handler(int sig)
@@ -907,95 +807,6 @@ static void sim_apn_generate_list(void)
   sim_apn_generate_list_from_section("providers");
 }
 
-/*static void uqmi_save_apn(const char *imsi, struct ApnItem *apn)*/
-/*{*/
-  /*assert(imsi);*/
-  /*assert(apn);*/
-
-  /*system("touch /etc/config/myproviders");*/
-
-  /*FILE *tmp = fopen("/tmp/.newapn", "w");*/
-
-  /*fprintf(tmp, "delete myproviders.%s\n", imsi);*/
-  /*fprintf(tmp, "set myproviders.%s=provider\n", imsi);*/
-  /*fprintf(tmp, "add_list myproviders.%s.network=%s\n", imsi, imsi);*/
-  /*fprintf(tmp, "set myproviders.%s.apn=%s\n", imsi, apn->apn);*/
-  /*if (apn->username && strlen(apn->username) > 0)*/
-    /*fprintf(tmp, "set myproviders.%s.username=%s\n", imsi, apn->username);*/
-  /*if (apn->password && strlen(apn->password) > 0)*/
-    /*fprintf(tmp, "set myproviders.%s.password=%s\n", imsi, apn->password);*/
-  /*fprintf(tmp, "commit myproviders");*/
-
-  /*fclose(tmp);*/
-
-  /*system("uci batch < /tmp/.newapn");*/
-  /*unlink("/tmp/.newapn");*/
-/*}*/
-
-bool uqmi_data_connect(void)
-{
-  /*char connect_command[256];*/
-
-  struct ApnItem *apn = apn_list;
-
-  while (apn)
-  {
-    syslog(LOG_INFO, "Attempting to connect with APN: %s", apn->apn);
-    for (int i = 0; i < qmi_settings.settlewait; ++i)
-    {
-      g_assert(!"Get data status");
-      /*struct QmiResponse *resp = uqmi("--get-data-status");*/
-      /*if (!strcmp(resp->error_string, "disconnected"))*/
-        /*break;*/
-      sleep(1);
-    }
-    g_assert(!"restart network");
-    /*uqmi_free(uqmi("--stop-network 0xffffffff --autoconnect"));*/
-    /*sleep(qmi_settings.settlewait);*/
-    /*snprintf(connect_command, sizeof(connect_command),*/
-             /*"--set-client-id wds,\"%s\" --start-network \"%s\" %s %s %s %s --auth-type both ",*/
-             /*cid, apn->apn,*/
-             /*(apn->username && strlen(apn->username) > 0) ? "--username" : "",*/
-             /*(apn->username && strlen(apn->username) > 0) ? apn->username : "",*/
-             /*(apn->password && strlen(apn->password) > 0) ? "--password" : "",*/
-             /*(apn->password && strlen(apn->password) > 0) ? apn->password : "");*/
-    /*struct QmiResponse *resp = uqmi(connect_command);*/
-    /*if (uqmi_is_error(resp))*/
-    /*{*/
-      /*if (!strcmp(resp->error_string, "No effect"))*/
-      /*{*/
-        /*syslog(LOG_WARNING, "APN %s had no effect, retrying", apn->apn);*/
-        /*continue;*/
-      /*}*/
-      /*syslog(LOG_INFO, "Failed to connect with APN: %s - %s", apn->apn, resp->error_string);*/
-      /*uqmi_free(resp);*/
-    /*}*/
-    /*else*/
-    /*{*/
-      /*uqmi_free(resp);*/
-
-      /*for (int i = 0; i < qmi_settings.settlewait; ++i)*/
-      /*{*/
-        /*resp = uqmi("--get-data-status");*/
-        /*if (!strcmp(resp->error_string, "connected"))*/
-        /*{*/
-          /*uqmi_free(resp);*/
-          /*syslog(LOG_INFO, "Connected with APN: %s", apn->apn);*/
-          /*qmi_status.apn = apn;*/
-          /*uqmi_save_apn(qmi_status.imsi, apn);*/
-          /*net_renew_lease();*/
-          /*return true;*/
-        /*}*/
-        /*sleep(1);*/
-      /*}*/
-    /*}*/
-    apn = apn->next;
-  }
-
-  syslog(LOG_INFO, "Could not find a working APN");
-  return false;
-}
-
 static void log_handler(const gchar *log_domain, GLogLevelFlags log_level,
                         const gchar *message, gpointer user_data)
 {
@@ -1015,17 +826,6 @@ static void log_handler(const gchar *log_domain, GLogLevelFlags log_level,
       syslog(LOG_INFO, "%s", message);
       break;
   }
-}
-
-static void modem_set_service(enum SignalType type)
-{
-  g_assert(!"Set network mode");
-  /*if (type == TypeLte)*/
-    /*uqmi_free(uqmi("--set-network-modes lte"));*/
-  /*else if (type == TypeWcdma)*/
-    /*uqmi_free(uqmi("--set-network-modes umts"));*/
-
-  SET_STATUS(signal_type, type);
 }
 
 static void pin_status_ready(QmiClientDms *client, GAsyncResult *res)
@@ -1106,8 +906,6 @@ static void event_report_ready(QmiClientNas *object,
 {
   GError *error = NULL;
 
-  syslog(LOG_INFO, "Have event report");
-
   uint8_t rssi;
   QmiNasRadioInterface interface;
   if (qmi_indication_nas_event_report_output_get_rssi(output, &rssi, &interface, &error))
@@ -1128,8 +926,6 @@ static void event_report_ready(QmiClientNas *object,
     {
       qmi_status.antenna_stats.rssi = -rssi;
       qmi_status.antenna_stats.test_complete = true;
-      if (antenna_testing < 5)
-        antenna_led_testing(qmi_status.antenna_stats.type == TypeLte);
     }
   }
   error = NULL;
@@ -1178,8 +974,6 @@ static void serving_system_ready(QmiClientNas *object,
                                  QmiIndicationNasServingSystemOutput *output,
                                  gpointer user_data)
 {
-  syslog(LOG_INFO, "Have serving system report");
-
   QmiNasRegistrationState registration_state;
   QmiNasAttachState cs_attach_state;
   QmiNasAttachState ps_attach_state;
@@ -1190,26 +984,37 @@ static void serving_system_ready(QmiClientNas *object,
     (output, &registration_state, &cs_attach_state, &ps_attach_state,
      &selected_network, &radio_interfaces, NULL))
   {
-    switch (registration_state)
+    bool isValid = false;
+    for (size_t i = 0; i < radio_interfaces->len; ++i)
     {
-      case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED:
-        qmi_status.wan_status = NoService;
-        break;
-      case QMI_NAS_REGISTRATION_STATE_REGISTERED:
-        qmi_status.wan_status = HomeNetwork;
-        break;
-      case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED_SEARCHING:
-        qmi_status.wan_status = Searching;
-        break;
-      case QMI_NAS_REGISTRATION_STATE_REGISTRATION_DENIED:
-        qmi_status.wan_status = RegistrationDenied;
-        break;
-      case QMI_NAS_REGISTRATION_STATE_UNKNOWN:
-        qmi_status.wan_status = NoService;
-        break;
+      QmiNasRadioInterface intf = g_array_index(radio_interfaces, QmiNasRadioInterface, i);
+      syslog(LOG_INFO, "Network status for %d %s %s", intf, qmi_nas_radio_interface_get_string(intf), qmi_nas_registration_state_get_string(registration_state));
+      if (intf == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte)
+        isValid = true;
+      else if (intf == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma)
+        isValid = true;
     }
-  }
 
+    if (isValid)
+      switch (registration_state)
+      {
+        case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED:
+          qmi_status.wan_status = NoService;
+          break;
+        case QMI_NAS_REGISTRATION_STATE_REGISTERED:
+          qmi_status.wan_status = HomeNetwork;
+          break;
+        case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED_SEARCHING:
+          qmi_status.wan_status = Searching;
+          break;
+        case QMI_NAS_REGISTRATION_STATE_REGISTRATION_DENIED:
+          qmi_status.wan_status = RegistrationDenied;
+          break;
+        case QMI_NAS_REGISTRATION_STATE_UNKNOWN:
+          qmi_status.wan_status = NoService;
+          break;
+      }
+  }
 }
 
 static void signal_info_ready(QmiClientNas *object,
@@ -1274,6 +1079,7 @@ static void nas_set_mode(enum SignalType type)
       (input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS, &error);
     qmi_status.signal_type = TypeWcdma;
   }
+  qmi_status.wan_status = NoService;
 
   qmi_client_nas_set_system_selection_preference
     (nas_client, input, 10, cancellable,
@@ -1297,11 +1103,8 @@ static void setup_nas(void)
     QmiMessageNasSetSystemSelectionPreferenceInput *input;
     input = qmi_message_nas_set_system_selection_preference_input_new();
 
-    qmi_message_nas_set_system_selection_preference_input_set_change_duration
-      (input, QMI_NAS_CHANGE_DURATION_PERMANENT, &error);
-
-    /*qmi_message_nas_set_system_selection_preference_input_set_gsm_wcdma_acquisition_order_preference*/
-      /*(input, QMI_NAS_GSM_WCDMA_ACQUISITION_ORDER_PREFERENCE_AUTOMATIC, &error);*/
+    /*qmi_message_nas_set_system_selection_preference_input_set_change_duration*/
+      /*(input, QMI_NAS_CHANGE_DURATION_PERMANENT, &error);*/
 
     qmi_message_nas_set_system_selection_preference_input_set_lte_band_preference
       (input, QMI_NAS_LTE_BAND_PREFERENCE_EUTRAN_3, &error);
@@ -1358,14 +1161,15 @@ static void imsi_ready(QmiDevice *dev, GAsyncResult *res)
     qmi_message_dms_uim_get_imsi_output_unref(output);
     qmi_error();
   }
-  if (!qmi_message_dms_uim_get_imsi_output_get_imsi(output, &qmi_status.imsi, &error))
+  const gchar *imsi = NULL;
+  if (!qmi_message_dms_uim_get_imsi_output_get_imsi(output, &imsi, &error))
   {
     syslog(LOG_ERR, "Failed to extract IMSI: %s", error->message);
     qmi_message_dms_uim_get_imsi_output_unref(output);
     qmi_error();
   }
+  qmi_status.imsi = strdup(imsi);
   qmi_message_dms_uim_get_imsi_output_unref(output);
-  sim_apn_generate_list();
 }
 
 static void msisdn_ready(QmiDevice *dev, GAsyncResult *res)
@@ -1384,11 +1188,14 @@ static void msisdn_ready(QmiDevice *dev, GAsyncResult *res)
     syslog(LOG_ERR, "Failed to read MSISDN: %s", error->message);
     qmi_error();
   }
-  if (!qmi_message_dms_get_msisdn_output_get_msisdn(output, &qmi_status.msisdn, &error))
+  const gchar *msisdn = NULL;
+  if (!qmi_message_dms_get_msisdn_output_get_msisdn(output, &msisdn, &error))
   {
     syslog(LOG_ERR, "Failed to extract MSISDN: %s", error->message);
     qmi_error();
   }
+  qmi_status.msisdn = strdup(msisdn);
+  qmi_message_dms_get_msisdn_output_unref(output);
 }
 
 static void wds_settings_ready(QmiClientWds *client, GAsyncResult *res)
@@ -1405,15 +1212,17 @@ static void wds_settings_ready(QmiClientWds *client, GAsyncResult *res)
 
   if (!qmi_message_wds_get_current_settings_output_get_result(output, &error))
   {
-    syslog(LOG_ERR, "Failed to set operating mode: %s", error->message);
+    syslog(LOG_ERR, "Failed to set operating mode (WDS): %s", error->message);
   }
 
+  error = NULL;
   const gchar *apn_name = NULL;
   if (qmi_message_wds_get_current_settings_output_get_apn_name(output, &apn_name, &error))
   {
     syslog(LOG_INFO, "Current APN is %s", apn_name);
   }
 
+  error = NULL;
   const gchar *username = NULL;
   if (qmi_message_wds_get_current_settings_output_get_username(output, &username, &error))
   {
@@ -1491,7 +1300,8 @@ static void device_open_ready(QmiDevice *dev, GAsyncResult *res)
 
   if (!qmi_device_open_finish (dev, res, &error)) {
     syslog(LOG_ERR, "Couldn't open the QmiDevice: %s\n", error->message);
-    exit(QMI_ERROR);
+    uqmi_reset();
+    qmi_error();
   }
 
   syslog(LOG_INFO, "QMI device ready");
@@ -1524,78 +1334,6 @@ static void device_new_ready(GObject *unused, GAsyncResult *res)
                   (GAsyncReadyCallback)device_open_ready, NULL);
 }
 
-void run_antenna_test(void)
-{
-  antenna_reset();
-  if (!strcmp(qmi_settings.modes, "detect"))
-  {
-    for (int type = 0; type < TypeCount; ++type)
-    {
-      modem_set_service(type);
-      net_renew_lease();
-      antenna_test(qmi_settings.antenna, type == TypeLte);
-    }
-  }
-  else
-  {
-    /*char cmd[64];*/
-    g_assert(!"Set network mode");
-    /*snprintf(cmd, sizeof(cmd), "--set-network-modes %s", qmi_settings.modes);*/
-    /*uqmi_free(uqmi(cmd));*/
-    net_renew_lease();
-    antenna_test(qmi_settings.antenna, !strcmp(qmi_settings.modes, "lte"));
-  }
-}
-
-void select_antenna(void)
-{
-  const struct AntennaResult *antenna = antenna_find_best();
-  if (!strcmp(qmi_settings.modes, "detect"))
-  {
-    syslog(LOG_INFO, "Selecting %s mode", SignalTypeText[antenna->type]);
-    modem_set_service(antenna->type);
-    net_renew_lease();
-  }
-
-  if (!strcmp(qmi_settings.antenna, "detect"))
-  {
-    syslog(LOG_INFO, "Selecting antenna %d", antenna->antenna);
-    antenna_select(antenna->antenna, false);
-    antenna_led_selected(antenna->type == TypeLte);
-  }
-}
-
-/*static void signal_strength_ready(QmiClientNas *client, GAsyncResult *res)*/
-/*{*/
-  /*GError *error = NULL;*/
-
-  /*QmiMessageNasGetSignalStrengthOutput *output;*/
-  /*output = qmi_client_nas_get_signal_strength_finish(client, res, &error);*/
-
-  /*if (!output)*/
-  /*{*/
-    /*syslog(LOG_ERR, "Failed to finish nas signal strength: %s", error->message);*/
-    /*qmi_error();*/
-  /*}*/
-
-  /*GArray *array;*/
-  /*if (qmi_message_nas_get_signal_strength_output_get_rssi_list(output, &array, &error))*/
-  /*{*/
-    /*for (size_t i = 0; i < array->len; ++i)*/
-    /*{*/
-      /*QmiMessageNasGetSignalStrengthOutputRssiListElement *item;*/
-      /*item = &g_array_index(array, QmiMessageNasGetSignalStrengthOutputRssiListElement, i);*/
-      /*syslog(LOG_INFO, "RSSI: %d %d", item->rssi, item->radio_interface);*/
-    /*}*/
-  /*}*/
-  /*else*/
-  /*{*/
-    /*syslog(LOG_ERR, "We do not have RSSI information: %s", error->message);*/
-  /*}*/
-
-  /*qmi_message_nas_get_signal_strength_output_unref(output);*/
-/*}*/
-
 static void packet_service_status_ready(QmiClientWds *client, GAsyncResult *res)
 {
   GError *error = NULL;
@@ -1605,7 +1343,7 @@ static void packet_service_status_ready(QmiClientWds *client, GAsyncResult *res)
   if (!output)
   {
     syslog(LOG_ERR, "Failed to finish service status: %s", error->message);
-    qmi_error();
+    return;
   }
 
   if (!qmi_message_wds_get_packet_service_status_output_get_result(output, &error))
@@ -1650,6 +1388,12 @@ static void start_network_ready(QmiClientWds *client, GAsyncResult *res)
   {
     syslog(LOG_INFO, "Data handle: %d", qmi_status.packet_data_handle);
   }
+  else
+  {
+    qmi_status.packet_data_handle = 0xffffffff;
+    stop_network();
+    apn_list = apn_list->next;
+  }
   error = NULL;
 
   QmiWdsCallEndReason end_reason;
@@ -1681,6 +1425,8 @@ static void start_network_ready(QmiClientWds *client, GAsyncResult *res)
 
 static void start_network(void)
 {
+  qmi_status.packet_data_handle = 0xffffffff;
+
   GError *error = NULL;
   QmiMessageWdsStartNetworkInput *input;
 
@@ -1709,7 +1455,6 @@ static void start_network(void)
     qmi_message_wds_start_network_input_set_authentication_preference
       (input, QMI_WDS_AUTHENTICATION_PAP | QMI_WDS_AUTHENTICATION_CHAP, &error);
     error = NULL;
-    apn_list = apn_list->next;
   }
 
   qmi_client_wds_start_network(wds_client, input, QMI_TIMEOUT, cancellable,
@@ -1757,116 +1502,229 @@ static void stop_network(void)
   qmi_message_wds_stop_network_input_unref(input);
 }
 
-void print_antenna(struct AntennaResult *antenna)
+static void disable_autoconnect(void)
 {
-  (void)antenna;
-  syslog(LOG_INFO, "Antenna tested");
+  GError *error = NULL;
+
+  QmiMessageWdsStopNetworkInput *input;
+  input = qmi_message_wds_stop_network_input_new();
+
+  if (!qmi_message_wds_stop_network_input_set_disable_autoconnect(input, true, &error))
+  {
+    syslog(LOG_ERR, "Failed to set disable autoconnect: %s", error->message);
+    qmi_error();
+  }
+  error = NULL;
+  if (!qmi_message_wds_stop_network_input_set_packet_data_handle(input,
+                                                                 0xffffffff,
+                                                                 &error))
+  {
+    syslog(LOG_ERR, "Failed to set data handle disabing autoconnect: %s", error->message);
+    qmi_error();
+  }
+
+  qmi_client_wds_stop_network(wds_client, input, QMI_TIMEOUT, cancellable,
+                              (GAsyncReadyCallback)stop_network_ready, NULL);
+
+  qmi_message_wds_stop_network_input_unref(input);
 }
 
-static int antenna_loops = 0;
-const int antenna_loops_max = 0;
+enum State {
+  StateStartup,
+  StateFindBest,
+  StateNextBeam,
+  StateWaitForBeam,
+  StateSaveResults,
+  StateTestsComplete,
+  StateRegister,
+  StateRegisterWait,
+  StateDataConnect,
+  StateTryApn,
+  StateDataConnectWait,
+  StateMonitorData,
+  StateCount,
+};
+
+struct BeamTest {
+  int8_t beam;
+  enum SignalType type;
+  bool included;
+  bool tested;
+  time_t scan_start;
+};
+static struct BeamTest beam_tests[] = {
+  {0, TypeLte,   true, false, 0},
+  {0, TypeWcdma, true, false, 0},
+  {1, TypeLte,   true, false, 0},
+  {1, TypeWcdma, true, false, 0},
+  {2, TypeLte,   true, false, 0},
+  {2, TypeWcdma, true, false, 0},
+  {3, TypeLte,   true, false, 0},
+  {3, TypeWcdma, true, false, 0},
+};
+#define BEAM_TEST_COUNT 8
+static struct BeamTest *current_beam = NULL;
+
+enum State current_state;
+
+void query_data_connection(void)
+{
+  qmi_client_wds_get_packet_service_status
+    (wds_client, NULL, QMI_TIMEOUT, cancellable,
+     (GAsyncReadyCallback)packet_service_status_ready, NULL);
+}
 
 gboolean main_check(gpointer data)
 {
   if (!nas_client || !wds_client)
     return TRUE;
 
-  if (antenna_testing == 0)
-  {
-    if (!strcmp(qmi_settings.modes, "detect"))
-      nas_set_mode(TypeLte);
-    antenna_reset();
-    antenna_select(antenna_testing, true);
-    memset(&qmi_status.antenna_stats, 0, sizeof(struct AntennaResult));
-    antenna_led_searching();
-    syslog(LOG_INFO, "Testing antenna %d", antenna_testing);
-    antenna_testing += 1;
-    antenna_loops = 0;
-  }
-  else if (antenna_testing == 1 || antenna_testing == 2 || antenna_testing == 3)
-  {
-    if (qmi_status.antenna_stats.test_complete || antenna_loops++ > antenna_loops_max)
-    {
-      memcpy(&antenna_results[qmi_status.antenna_stats.type][antenna_testing-1],
-             &qmi_status.antenna_stats, sizeof(struct AntennaResult));
-      print_antenna(&qmi_status.antenna_stats);
-      net_renew_lease();
-      antenna_select(antenna_testing, true);
-      memset(&qmi_status.antenna_stats, 0, sizeof(struct AntennaResult));
-      antenna_led_searching();
-      syslog(LOG_INFO, "Testing antenna %d", antenna_testing);
-      antenna_testing += 1;
-      antenna_loops = 0;
-    }
-  }
-  else if (antenna_testing == 4)
-  {
-    if (qmi_status.antenna_stats.test_complete || antenna_loops++ > antenna_loops_max)
-    {
-      memcpy(&antenna_results[qmi_status.antenna_stats.type][antenna_testing-1],
-             &qmi_status.antenna_stats, sizeof(struct AntennaResult));
-      print_antenna(&qmi_status.antenna_stats);
-      net_renew_lease();
+  enum State next_state = current_state;
 
-      antenna_testing += 1;
-      antenna_loops = 0;
-    }
-  }
-  else if (antenna_testing == 5)
+  switch (current_state)
   {
-    // TODO: Select mode from antenna test
-    if (!strcmp(qmi_settings.modes, "detect") && qmi_status.signal_type == TypeLte)
-    {
-      nas_set_mode(TypeWcdma);
-      antenna_select(0, true);
-      memset(&qmi_status.antenna_stats, 0, sizeof(struct AntennaResult));
-      antenna_led_searching();
-      syslog(LOG_INFO, "Testing antenna %d", 0);
-      antenna_testing = 1;
-      antenna_loops = 0;
-    }
-    else
-    {
-      if (!strcmp(qmi_settings.antenna, "detect"))
+    case StateStartup:
       {
-      const struct AntennaResult *antenna = antenna_find_best();
-        syslog(LOG_INFO, "Selecting antenna %d", antenna->antenna);
+        syslog(LOG_DEBUG, "UMTSD Startup");
+        query_data_connection();
+        disable_autoconnect();
+        if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_CONNECTED)
+          next_state = StateMonitorData;
+        else
+        {
+          struct stat file_stat;
+          lstat("/tmp/connected", &file_stat);
+          if (S_ISREG(file_stat.st_mode))
+            next_state = StateRegister;
+          else
+            next_state = StateFindBest;
+        }
+      }
+      break;
+    case StateFindBest:
+      {
+        syslog(LOG_DEBUG, "Searching for best signal");
+        antenna_reset();
+        for (size_t t = 0; t < BEAM_TEST_COUNT; ++t)
+          beam_tests[t].tested = false;
+        next_state = StateNextBeam;
+      }
+      break;
+    case StateNextBeam:
+      {
+        bool changed_beam = false;
+        for (size_t t = 0; t < BEAM_TEST_COUNT; ++t)
+          if (beam_tests[t].included && !beam_tests[t].tested)
+          {
+            current_beam = &beam_tests[t];
+            current_beam->tested = true;
+            current_beam->scan_start = time(NULL);
+            syslog(LOG_INFO, "Testing antenna %d (%s)", current_beam->beam,
+                   SignalTypeText[current_beam->type]);
+            nas_set_mode(current_beam->type);
+            antenna_select(current_beam->beam, current_beam->type == TypeLte);
+            memset(&qmi_status.antenna_stats, 0, sizeof(struct AntennaResult));
+            antenna_led_searching();
+            changed_beam = true;
+            break;
+          }
+        next_state = (changed_beam) ? StateWaitForBeam : StateTestsComplete;
+      }
+      break;
+    case StateWaitForBeam:
+      syslog(LOG_DEBUG, "Waiting for antenna test to complete");
+      if (qmi_status.antenna_stats.test_complete && qmi_status.wan_status == HomeNetwork)
+        next_state = StateSaveResults;
+      else if (time(NULL) - current_beam->scan_start > qmi_settings.regtimeout)
+      {
+        syslog(LOG_INFO, "Antenna registration timed out");
+        next_state = StateNextBeam;
+      }
+      /*else if (qmi_status.wan_status == RegistrationDenied)*/
+      /*{*/
+        /*syslog(LOG_INFO, "Antenna registration denied");*/
+        /*next_state = StateNextBeam;*/
+      /*}*/
+      break;
+    case StateSaveResults:
+      syslog(LOG_DEBUG, "Saving antenna results");
+      memcpy(&antenna_results[qmi_status.antenna_stats.type][current_beam->beam],
+             &qmi_status.antenna_stats, sizeof(struct AntennaResult));
+      antenna_log(&qmi_status.antenna_stats);
+      next_state = StateNextBeam;
+      break;
+    case StateTestsComplete:
+      {
+        const struct AntennaResult *antenna = antenna_find_best();
+        syslog(LOG_INFO, "Selected antenna %d (%s)", antenna->antenna,
+               SignalTypeText[antenna->type]);
         nas_set_mode(antenna->type);
-        net_renew_lease();
         antenna_select(antenna->antenna, false);
         antenna_led_selected(antenna->type == TypeLte);
+        next_state = StateRegister;
       }
-      antenna_testing += 1;
-      antenna_loops = 0;
-    }
-  }
-  else
-  {
-    /*QmiMessageNasGetSignalStrengthInput *input = qmi_message_nas_get_signal_strength_input_new();*/
-    /*qmi_client_nas_get_signal_strength*/
-      /*(nas_client, input, QMI_TIMEOUT, cancellable,*/
-       /*(GAsyncReadyCallback)signal_strength_ready, NULL);*/
-
-    if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_DISCONNECTED)
-    {
-      stop_network();
-      qmi_status.packet_status = QMI_WDS_CONNECTION_STATUS_UNKNOWN;
+      break;
+    case StateRegister:
+      syslog(LOG_DEBUG, "Registering");
+      qmi_status.registration_start = time(NULL);
+      qmi_status.wan_status = NoService;
+      next_state = StateRegisterWait;
+      break;
+    case StateRegisterWait:
+      if (qmi_status.wan_status == HomeNetwork)
+        next_state = StateDataConnect;
+      else if (time(NULL) - qmi_status.registration_start > 2*qmi_settings.regtimeout)
+      {
+        syslog(LOG_INFO, "Registration timed out");
+        next_state = StateFindBest;
+      }
+      break;
+    case StateDataConnect:
+      syslog(LOG_DEBUG, "Connecting to data service");
+      sim_apn_generate_list();
+      if (!apn_list)
+      {
+        syslog(LOG_ERR, "No APNs found for SIM %s", qmi_status.imsi);
+        break;
+      }
+      next_state = StateTryApn;
+      break;
+    case StateTryApn:
+      syslog(LOG_DEBUG, "Trying next APN");
       start_network();
-    }
-    else
-    {
-      if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_CONNECTED)
-        apn_list = NULL;
-      qmi_client_wds_get_packet_service_status
-        (wds_client, NULL, QMI_TIMEOUT, cancellable,
-         (GAsyncReadyCallback)packet_service_status_ready, NULL);
-    }
+      next_state = StateDataConnectWait;
+      break;
+    case StateDataConnectWait:
+      syslog(LOG_DEBUG, "Waiting for data connection");
+      query_data_connection();
+      if (qmi_status.packet_data_handle != 0xffffffff
+          && qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_CONNECTED)
+      {
+        net_renew_lease();
+        next_state = StateMonitorData;
+      }
+      break;
+    case StateMonitorData:
+      {
+        syslog(LOG_DEBUG, "Monitoring data connection");
+        fclose(fopen("/tmp/connected", "w"));
+        query_data_connection();
+        if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_DISCONNECTED)
+          next_state = StateDataConnect;
+      }
+      break;
+    case StateCount:
+      g_assert_not_reached();
+      break;
   }
+
+  current_state = next_state;
 
   snmp_write_status();
 
   return TRUE;
 }
+
 int main(int argc, char **argv)
 {
   openlog("umtsd", LOG_PERROR, LOG_DAEMON);
@@ -1918,7 +1776,7 @@ int main(int argc, char **argv)
 
   cancellable = g_cancellable_new ();
   GMainLoop *loop = g_main_loop_new (NULL, FALSE);
-  g_timeout_add_seconds(5, main_check, "main check");
+  g_timeout_add_seconds(3, main_check, "main check");
 
   qmi_device_new (file, cancellable, (GAsyncReadyCallback)device_new_ready, NULL);
   g_main_loop_run (loop);
@@ -1927,40 +1785,6 @@ int main(int argc, char **argv)
     g_object_unref (cancellable);
   g_main_loop_unref (loop);
   g_object_unref (file);
-
-  exit(0);
-
-  led_3g_red(false);
-
-  SET_STATUS(sim_status, SimOk);
-  snmp_write_status();
-
-  /*while (true)*/
-  /*{*/
-    /*if (!sim_is_present())*/
-    /*{*/
-      /*led_3g_red(true);*/
-      /*exit(1);*/
-    /*}*/
-
-    /*antenna_get_stats(&qmi_status.antenna_stats, qmi_status.active_antenna);*/
-    /*qmi_status.changed = true;*/
-
-    /*resp = uqmi("--get-data-status");*/
-    /*fprintf(stderr, "%s", resp->error_string);*/
-    /*if (strcmp(resp->error_string, "connected"))*/
-    /*{*/
-      /*uqmi_free(resp);*/
-      /*sleep(qmi_settings.settlewait);*/
-      /*resp = uqmi("--get-data-status");*/
-      /*if (strcmp(resp->error_string, "connected"))*/
-        /*break;*/
-    /*}*/
-    /*sleep(1);*/
-
-    /*// Update qmi_statsu*/
-    /*snmp_write_status();*/
-  /*}*/
 
   syslog(LOG_INFO, "Data connection lost, restarting umtsd...");
 
