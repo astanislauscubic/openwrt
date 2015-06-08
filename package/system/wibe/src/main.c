@@ -29,12 +29,6 @@ static void qmi_error(void)
   exit(QMI_ERROR);
 };
 
-void *uqmi()
-{
-  g_assert(!"Old UQMI called");
-  return NULL;
-}
-
 static void stop_network(void);
 static void start_network(void);
 
@@ -970,9 +964,9 @@ static void event_report_ready(QmiClientNas *object,
   error = NULL;
 }
 
-static void serving_system_ready(QmiClientNas *object,
-                                 QmiIndicationNasServingSystemOutput *output,
-                                 gpointer user_data)
+static void serving_system_indication_ready(QmiClientNas *object,
+                                            QmiIndicationNasServingSystemOutput *output,
+                                            gpointer user_data)
 {
   QmiNasRegistrationState registration_state;
   QmiNasAttachState cs_attach_state;
@@ -989,6 +983,61 @@ static void serving_system_ready(QmiClientNas *object,
     {
       QmiNasRadioInterface intf = g_array_index(radio_interfaces, QmiNasRadioInterface, i);
       syslog(LOG_INFO, "Network status for %d %s %s", intf, qmi_nas_radio_interface_get_string(intf), qmi_nas_registration_state_get_string(registration_state));
+      if (intf == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte)
+        isValid = true;
+      else if (intf == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma)
+        isValid = true;
+    }
+
+    if (isValid)
+      switch (registration_state)
+      {
+        case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED:
+          qmi_status.wan_status = NoService;
+          break;
+        case QMI_NAS_REGISTRATION_STATE_REGISTERED:
+          qmi_status.wan_status = HomeNetwork;
+          break;
+        case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED_SEARCHING:
+          qmi_status.wan_status = Searching;
+          break;
+        case QMI_NAS_REGISTRATION_STATE_REGISTRATION_DENIED:
+          qmi_status.wan_status = RegistrationDenied;
+          break;
+        case QMI_NAS_REGISTRATION_STATE_UNKNOWN:
+          qmi_status.wan_status = NoService;
+          break;
+      }
+  }
+}
+
+static void serving_system_ready(QmiClientNas *client,
+                                 GAsyncResult *res)
+{
+  GError *error = NULL;
+
+  QmiMessageNasGetServingSystemOutput *output;
+  output = qmi_client_nas_get_serving_system_finish(client, res, &error);
+
+  QmiNasRegistrationState registration_state;
+  QmiNasAttachState cs_attach_state;
+  QmiNasAttachState ps_attach_state;
+  QmiNasNetworkType selected_network;
+  GArray *radio_interfaces;
+
+  if (qmi_message_nas_get_serving_system_output_get_serving_system
+    (output, &registration_state, &cs_attach_state, &ps_attach_state,
+     &selected_network, &radio_interfaces, NULL))
+  {
+    bool isValid = false;
+    for (size_t i = 0; i < radio_interfaces->len; ++i)
+    {
+      QmiNasRadioInterface intf = g_array_index(radio_interfaces, QmiNasRadioInterface, i);
+      syslog(LOG_INFO, "Network status for %d %s %s", intf, qmi_nas_radio_interface_get_string(intf), qmi_nas_registration_state_get_string(registration_state));
+      if (qmi_status.signal_type == TypeUnknown)
+      {
+        qmi_status.signal_type = (intf == QMI_NAS_RADIO_INTERFACE_LTE) ? TypeLte : TypeWcdma;
+      }
       if (intf == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte)
         isValid = true;
       else if (intf == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma)
@@ -1094,7 +1143,7 @@ static void setup_nas(void)
 
   {
     g_signal_connect(nas_client, "event-report", G_CALLBACK(event_report_ready), NULL);
-    g_signal_connect(nas_client, "serving-system", G_CALLBACK(serving_system_ready), NULL);
+    g_signal_connect(nas_client, "serving-system", G_CALLBACK(serving_system_indication_ready), NULL);
     g_signal_connect(nas_client, "signal-info", G_CALLBACK(signal_info_ready), NULL);
     g_signal_connect(nas_client, "system-info", G_CALLBACK(system_info_ready), NULL);
   }
@@ -1574,6 +1623,13 @@ void query_data_connection(void)
      (GAsyncReadyCallback)packet_service_status_ready, NULL);
 }
 
+void query_serving_system(void)
+{
+  qmi_client_nas_get_serving_system
+    (nas_client, NULL, QMI_TIMEOUT, cancellable,
+     (GAsyncReadyCallback)serving_system_ready, NULL);
+}
+
 gboolean main_check(gpointer data)
 {
   if (!nas_client || !wds_client)
@@ -1668,6 +1724,7 @@ gboolean main_check(gpointer data)
       syslog(LOG_DEBUG, "Registering");
       qmi_status.registration_start = time(NULL);
       qmi_status.wan_status = NoService;
+      query_serving_system();
       next_state = StateRegisterWait;
       break;
     case StateRegisterWait:
@@ -1678,6 +1735,8 @@ gboolean main_check(gpointer data)
         syslog(LOG_INFO, "Registration timed out");
         next_state = StateFindBest;
       }
+      else
+        query_serving_system();
       break;
     case StateDataConnect:
       syslog(LOG_DEBUG, "Connecting to data service");
