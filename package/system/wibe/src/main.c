@@ -189,8 +189,6 @@ struct QmiStatus {
   const char *imei;
   const char *imsi;
   const char *msisdn;
-  int cid;
-  int lac;
   enum SimStatus sim_status;
   enum Registration wan_status;
   enum Antenna active_antenna;
@@ -311,8 +309,8 @@ static void snmp_write_status(void)
 
   snmp_write_string(snmpfile, "1S264.0", SignalTypeText[qmi_status.signal_type]);
 
-  snmp_write_int(snmpfile, "1S773.0", qmi_status.cid);
-  snmp_write_int(snmpfile, "1S774.0", qmi_status.lac);
+  snmp_write_int(snmpfile, "1S773.0", qmi_status.antenna_stats.cid);
+  snmp_write_int(snmpfile, "1S774.0", qmi_status.antenna_stats.lac);
 
   fclose(snmpfile);
 
@@ -334,7 +332,7 @@ static void snmp_write_antenna_test(void)
       if (!r->test_complete)
         continue;
 
-      fprintf(snmpfile, "2S100.%d=\"%s\"\n", count, AntennaText[beam]);
+      fprintf(snmpfile, "2S100.%d=\"%s%s\"\n", count, AntennaText[beam], SignalTypeText[r->type]);
       char *test_time = asctime(&r->test_time);
       test_time[strlen(test_time) - 1] = '\0';
       fprintf(snmpfile, "2S101.%d=\"%s\"\n", count, test_time);
@@ -558,6 +556,24 @@ static void antenna_led_searching(void)
   bytes = write(fd, "heartbeat", strlen("heartbeat"));
   assert(bytes > 0);
   close(fd);
+}
+
+enum Antenna beam_from_sysfs(void)
+{
+  static char antenna_name[10];
+
+  int fd = open("/sys/devices/wibe-antenna.4/antenna", O_RDONLY);
+  assert(fd);
+  int bytes = read(fd, &antenna_name, 10);
+  assert(bytes > 0);
+  antenna_name[bytes-1] = '\0'; // Remove \n
+  close(fd);
+
+  for (size_t i = 0; i < ANTENNAS; ++i)
+    if (!strcmp(AntennaText[i], antenna_name))
+      return i;
+
+  return UnknownBeam;
 }
 
 void antenna_led_testing(bool isLTE)
@@ -1101,36 +1117,36 @@ static void serving_system_indication_ready(QmiClientNas *object,
     (output, &registration_state, &cs_attach_state, &ps_attach_state,
      &selected_network, &radio_interfaces, NULL))
   {
-    bool isValid = false;
     for (size_t i = 0; i < radio_interfaces->len; ++i)
     {
+      bool isValid = false;
       QmiNasRadioInterface intf = g_array_index(radio_interfaces, QmiNasRadioInterface, i);
       syslog(LOG_DEBUG, "Network status for %d %s %s", intf, qmi_nas_radio_interface_get_string(intf), qmi_nas_registration_state_get_string(registration_state));
       if (intf == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte)
         isValid = true;
       else if (intf == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma)
         isValid = true;
-    }
 
-    if (isValid)
-      switch (registration_state)
-      {
-        case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED:
-          SET_STATUS(wan_status, NoService);
-          break;
-        case QMI_NAS_REGISTRATION_STATE_REGISTERED:
-          SET_STATUS(wan_status, HomeNetwork);
-          break;
-        case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED_SEARCHING:
-          SET_STATUS(wan_status, Searching);
-          break;
-        case QMI_NAS_REGISTRATION_STATE_REGISTRATION_DENIED:
-          SET_STATUS(wan_status, RegistrationDenied);
-          break;
-        case QMI_NAS_REGISTRATION_STATE_UNKNOWN:
-          SET_STATUS(wan_status, NoService);
-          break;
-      }
+      if (isValid)
+        switch (registration_state)
+        {
+          case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED:
+            SET_STATUS(wan_status, NoService);
+            break;
+          case QMI_NAS_REGISTRATION_STATE_REGISTERED:
+            SET_STATUS(wan_status, HomeNetwork);
+            break;
+          case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED_SEARCHING:
+            SET_STATUS(wan_status, Searching);
+            break;
+          case QMI_NAS_REGISTRATION_STATE_REGISTRATION_DENIED:
+            SET_STATUS(wan_status, RegistrationDenied);
+            break;
+          case QMI_NAS_REGISTRATION_STATE_UNKNOWN:
+            SET_STATUS(wan_status, NoService);
+            break;
+        }
+    }
   }
 }
 
@@ -1159,9 +1175,9 @@ static void serving_system_ready(QmiClientNas *client,
     (output, &registration_state, &cs_attach_state, &ps_attach_state,
      &selected_network, &radio_interfaces, NULL))
   {
-    bool isValid = false;
     for (size_t i = 0; i < radio_interfaces->len; ++i)
     {
+      bool isValid = false;
       QmiNasRadioInterface intf = g_array_index(radio_interfaces, QmiNasRadioInterface, i);
       syslog(LOG_DEBUG, "Network status for %d %s %s", intf, qmi_nas_radio_interface_get_string(intf), qmi_nas_registration_state_get_string(registration_state));
       if (qmi_status.signal_type == TypeUnknown)
@@ -1172,39 +1188,49 @@ static void serving_system_ready(QmiClientNas *client,
         isValid = true;
       else if (intf == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma)
         isValid = true;
-    }
 
-    if (isValid)
-    {
-      switch (registration_state)
+      if (isValid)
       {
-        case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED:
-          SET_STATUS(wan_status, NoService);
-          break;
-        case QMI_NAS_REGISTRATION_STATE_REGISTERED:
-          SET_STATUS(wan_status, HomeNetwork);
-          break;
-        case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED_SEARCHING:
-          SET_STATUS(wan_status, Searching);
-          break;
-        case QMI_NAS_REGISTRATION_STATE_REGISTRATION_DENIED:
-          SET_STATUS(wan_status, RegistrationDenied);
-          break;
-        case QMI_NAS_REGISTRATION_STATE_UNKNOWN:
-          SET_STATUS(wan_status, NoService);
-          break;
-      }
-      error = NULL;
-      uint32_t cid;
-      if (qmi_message_nas_get_serving_system_output_get_cid_3gpp(output, &cid, NULL))
-      {
-        qmi_status.antenna_stats.cid = cid;
-      }
-      error = NULL;
-      uint16_t lac;
-      if (qmi_message_nas_get_serving_system_output_get_lac_3gpp(output, &lac, NULL))
-      {
-        qmi_status.antenna_stats.lac = lac;
+        switch (registration_state)
+        {
+          case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED:
+            SET_STATUS(wan_status, NoService);
+            break;
+          case QMI_NAS_REGISTRATION_STATE_REGISTERED:
+            SET_STATUS(wan_status, HomeNetwork);
+            break;
+          case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED_SEARCHING:
+            SET_STATUS(wan_status, Searching);
+            break;
+          case QMI_NAS_REGISTRATION_STATE_REGISTRATION_DENIED:
+            SET_STATUS(wan_status, RegistrationDenied);
+            break;
+          case QMI_NAS_REGISTRATION_STATE_UNKNOWN:
+            SET_STATUS(wan_status, NoService);
+            break;
+        }
+        error = NULL;
+        uint32_t cid;
+        if (qmi_message_nas_get_serving_system_output_get_cid_3gpp(output, &cid, &error))
+        {
+          qmi_status.antenna_stats.cid = cid;
+        }
+        else
+        {
+          syslog(LOG_WARNING, "Failed to get CID: %s", error->message);
+          g_error_free(error);
+        }
+        error = NULL;
+        uint16_t lac;
+        if (qmi_message_nas_get_serving_system_output_get_lac_3gpp(output, &lac, &error))
+        {
+          qmi_status.antenna_stats.lac = lac;
+        }
+        else
+        {
+          syslog(LOG_WARNING, "Failed to get LAC: %s", error->message);
+          g_error_free(error);
+        }
       }
     }
   }
@@ -2140,6 +2166,9 @@ gboolean main_check(gpointer data)
         fclose(fopen("/tmp/connected", "w"));
         query_data_connection();
         query_signal_strength();
+        query_serving_system();
+        if (qmi_status.active_antenna == UnknownBeam)
+          qmi_status.active_antenna = beam_from_sysfs();
         if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_DISCONNECTED)
           next_state = StateDataConnect;
       }
