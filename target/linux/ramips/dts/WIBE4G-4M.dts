@@ -4,7 +4,7 @@
 
 / {
 	compatible = "WIBE-4G", "ralink,rt3050-soc";
-	model = "Deltenna WiBE 4G";
+	model = "RangeXD WiBE 4G";
 
 	chosen {
 		bootargs = "console=ttyS0,57600";

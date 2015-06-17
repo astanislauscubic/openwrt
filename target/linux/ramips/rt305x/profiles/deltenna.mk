@@ -6,7 +6,7 @@
 #
 
 define Profile/WIBE4G
-       NAME:=Deltenna WIBE4G
+       NAME:=RangeXD WIBE4G
        PACKAGES:=kmod-switch-rtl8366s kmod-swconfig swconfig kmod-leds-wibe
 endef
 

@@ -220,6 +220,9 @@ ramips_board_detect() {
 	*"Asus RP-N53")
 		name="rp-n53"
 		;;
+	*"RangeXD WiBE 4G")
+		name="wibe-4g"
+    ;;
 	*"RT-G32 B1")
 		name="rt-g32-b1"
 		;;
