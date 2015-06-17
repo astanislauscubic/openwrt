@@ -1,11 +1,10 @@
-SOURCES=main.c
-OBJECTS=$(SOURCES:.c=.o)
-EXECUTABLE=umtsd
+all: main.c wwan_monitor.c settings.c umtsd wan_monitor
 
-all: $(SOURCES) $(EXECUTABLE)
+umtsd: main.o settings.o
+	$(CC) $(LDFLAGS) $^ $(LIBS) -o $@
 
-$(EXECUTABLE): $(OBJECTS)
-	$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -o $@
+wan_monitor: wwan_monitor.o settings.o
+	$(CC) $(LDFLAGS) $^ $(LIBS) -o $@
 
 .c.o:
 	$(CC) -c $(CFLAGS) $< -o $@

@@ -13,7 +13,7 @@ define Package/wibe
   TITLE:=Deltenna WiBE
   URL:=http://www.deltenna.com
   VERSION:=$(PKG_RELEASE)-$(REVISION)
-  #DEPENDS:=+glib2
+  DEPENDS:=+glib2 +libqmi +libuci
 endef
 
 PKG_CONFIG_DEPENDS=CONFIG_PACKAGE_glib2
@@ -33,10 +33,10 @@ TARGET_CFLAGS += -I$(PKG_BUILD_DIR) \
                  -I$(STAGING_DIR)/usr/include \
                  -std=gnu99 \
                  -Wall -Werror -g
-TARGET_CFLAGS += $(shell $(PKG_CONFIG) --cflags json-c)
+#TARGET_CFLAGS += $(shell $(PKG_CONFIG) --cflags json-c)
 TARGET_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0)
 TARGET_CFLAGS += $(shell $(PKG_CONFIG) --cflags qmi-glib)
-TARGET_LIBS =    $(shell $(PKG_CONFIG) --libs json-c)
+#TARGET_LIBS =    $(shell $(PKG_CONFIG) --libs json-c)
 TARGET_LIBS +=   $(shell $(PKG_CONFIG) --libs glib-2.0)
 TARGET_LIBS +=   $(shell $(PKG_CONFIG) --libs qmi-glib)
 
@@ -51,7 +51,7 @@ define Build/Compile
 	        CC=$(TARGET_CC) \
 	        CFLAGS="$(TARGET_CFLAGS) $(BUILD_OPTS)" \
 	        LDFLAGS="$(TARGET_LDFLAGS)" $(MAKEOPTS) \
-	        LIBS="-luci -ljson-c $(TARGET_LIBS)"
+	        LIBS="-luci $(TARGET_LIBS)"
 endef
 
 define Package/wibe/install
@@ -63,12 +63,14 @@ define Package/wibe/install
 	$(INSTALL_DIR) $(1)/lib/netifd/proto/
 
 	$(CP) ./files/etc/init.d/umtsd $(1)/etc/init.d/umtsd
+	$(CP) ./files/etc/init.d/wan_monitor $(1)/etc/init.d/wan_monitor
 	$(CP) ./files/usr/share/umtsd/umtsd.sh $(1)/usr/share/umtsd/umtsd.sh
 	$(CP) ./files/etc/uci-defaults/00_password $(1)/etc/uci-defaults/
 	$(CP) ./files/etc/uci-defaults/03_wifi $(1)/etc/uci-defaults
 	$(CP) ./files/etc/config/myproviders $(1)/etc/config/
 	$(CP) ./files/lib/netifd/proto/qmi.sh $(1)/lib/netifd/proto/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/umtsd $(1)/sbin/umtsd
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/wan_monitor $(1)/sbin/wan_monitor
 	$(STRIP) $(1)/sbin/umtsd
 endef
 

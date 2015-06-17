@@ -3,6 +3,8 @@
 EXTRA_COMMANDS="lucistat"
 EXTRA_HELP="lucistat  Get status information if lua friendly format"
 
+. /etc/openwrt_release
+
 lucistat() {
   cat /tmp/wibe_luci
 }
@@ -19,4 +21,13 @@ stop() {
   /sbin/start-stop-daemon -K -p /var/run/umtsd-sh.pid
   sleep 1
   /sbin/start-stop-daemon -K -x /sbin/umtsd
+  sleep 1
+  killall umtsd
+  sleep 1
+  killall -9 umtsd
+}
+
+restart() {
+  stop
+  start
 }

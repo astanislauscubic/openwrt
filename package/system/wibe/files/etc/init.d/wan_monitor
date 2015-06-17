@@ -1,0 +1,16 @@
+#!/bin/sh /etc/rc.common
+
+START=30
+STOP=30
+
+boot() {
+  /sbin/start-stop-daemon -S -b -m -p /var/run/wan_monitor.pid -x /sbin/wan_monitor
+}
+
+start() {
+  /sbin/start-stop-daemon -S -b -m -p /var/run/wan_monitor.pid -x /sbin/wan_monitor
+}
+
+stop() {
+  /sbin/start-stop-daemon -K -p /var/run/wan_monitor.pid
+}

@@ -35,7 +35,7 @@ diff -uNr linux-3.10.49/drivers/misc/antenna-wibe.c linux-3.10.49/drivers/misc/a
 +
 +static struct gpio modem_gpios[] = {
 +	{ MODEM_GPIO_CD, GPIOF_IN | GPIOF_EXPORT_DIR_FIXED,		"MODEM_GPIO_CD" },
-+	{ MODEM_GPIO_IO, GPIOF_OUT_INIT_HIGH | GPIOF_EXPORT_DIR_FIXED,	"MODEM_GPIO_IO" },
++	{ MODEM_GPIO_IO, GPIOF_OUT_INIT_LOW | GPIOF_EXPORT_DIR_FIXED,	"MODEM_GPIO_IO" },
 +};
 +
 +static ssize_t show_antenna(struct device *dev, struct device_attribute *attr,
