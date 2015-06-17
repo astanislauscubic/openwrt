@@ -1,0 +1,39 @@
+Release Notes for RangeXD WiBE 4G with 8MB flash
+================================================
+
+This image is only for 4G WiBE devices with 8MB of flash, it is incompatible
+with the 3G HS21 WiBE.
+
+You can find your current firmware version on the Status -> Overview page of the
+web interface. New firmware can be flashed by going to System -> Backup / Flash
+Firmware. After choosing the new firmware image file and clicking on Flash
+Image, ensure that the size and checksum matches that shown in the version
+information below. Do not continue if the size of the image is larger than the
+space available.
+
+Release 4.0.0-rc2
+-----------------
+
+Build Date : 2015-06-15
+Locale     : GB
+Checksum   : 6fca8f4348282845bbe068c3d782e558
+Size       : Size: 4.25 MB (7.69 MB available)
+
+IMPORTANT: When flashing this version ensure "Keep settings" is not ticked. Do
+not attempt to restore configuration files saved from previous versions.
+
+[New Features]
+* Wireless service (LTE/WCDMA) and enabled antennas can be configured for the
+  WAN interface
+* An antenna rescan can be forced from the WAN interface configuration page
+
+[Improvements]
+* Antenna LEDs flash during an antenna scan, red for searching, green for LTE
+  testing and orange for WCDMA testing
+* Fixes to the wibeStatus SNMP reporting
+* IMEI can be viewed from LuCI
+* Improved memory usage and recovery from out of memory conditions
+* Stability improvements
+
+[Known Issues]
+* SNMP does not report the wibeAntennaTable
