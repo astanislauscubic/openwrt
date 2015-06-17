@@ -252,7 +252,7 @@ CONFIG_TARGET_SUFFIX="uclibc"
 # CONFIG_IB is not set
 # CONFIG_SDK is not set
 # CONFIG_MAKE_TOOLCHAIN is not set
-# CONFIG_IMAGEOPT is not set
+CONFIG_IMAGEOPT=y
 # CONFIG_PREINITOPT is not set
 CONFIG_TARGET_PREINIT_SUPPRESS_STDERR=y
 CONFIG_TARGET_PREINIT_TIMEOUT=2
@@ -267,7 +267,14 @@ CONFIG_TARGET_INIT_PATH="/bin:/sbin:/usr/bin:/usr/sbin"
 CONFIG_TARGET_INIT_ENV=""
 CONFIG_TARGET_INIT_CMD="/sbin/init"
 CONFIG_TARGET_INIT_SUPPRESS_STDERR=y
-# CONFIG_VERSIONOPT is not set
+CONFIG_VERSIONOPT=y
+CONFIG_VERSION_DIST="RangeXD"
+CONFIG_VERSION_NICK="WiBE 4G"
+CONFIG_VERSION_NUMBER="4.0.0-rc1"
+CONFIG_VERSION_REPO="http://downloads.openwrt.org/snapshots/trunk/%T/packages"
+CONFIG_VERSION_MANUFACTURER="RangeXD"
+CONFIG_VERSION_PRODUCT="WiBE"
+CONFIG_VERSION_HWREV="4G"
 CONFIG_PER_FEED_REPO=y
 CONFIG_PER_FEED_REPO_ADD_DISABLED=y
 CONFIG_PER_FEED_REPO_ADD_COMMENTED=y
@@ -2453,6 +2460,7 @@ CONFIG_PACKAGE_lua=y
 #
 # Filesystem
 #
+CONFIG_PACKAGE_libattr=y
 # CONFIG_PACKAGE_libext2fs is not set
 # CONFIG_PACKAGE_libfuse is not set
 # CONFIG_PACKAGE_libow is not set
@@ -2485,6 +2493,7 @@ CONFIG_PACKAGE_libpolarssl=m
 # CONFIG_PACKAGE_unixodbc is not set
 # CONFIG_PACKAGE_alsa-lib is not set
 # CONFIG_PACKAGE_argp-standalone is not set
+CONFIG_PACKAGE_glib2=y
 # CONFIG_PACKAGE_libblkid is not set
 CONFIG_PACKAGE_libblobmsg-json=y
 # CONFIG_PACKAGE_libbz2 is not set
@@ -2501,6 +2510,7 @@ CONFIG_PACKAGE_libblobmsg-json=y
 # CONFIG_PACKAGE_libevent2-openssl is not set
 # CONFIG_PACKAGE_libevent2-pthreads is not set
 # CONFIG_PACKAGE_libexif is not set
+CONFIG_PACKAGE_libffi=y
 # CONFIG_PACKAGE_libffmpeg-audio-dec is not set
 # CONFIG_PACKAGE_libffmpeg-custom is not set
 # CONFIG_PACKAGE_libffmpeg-full is not set
@@ -2543,6 +2553,7 @@ CONFIG_PACKAGE_libnl-tiny=y
 # CONFIG_PACKAGE_libpcap is not set
 # CONFIG_PACKAGE_libpng is not set
 # CONFIG_PACKAGE_libpopt is not set
+CONFIG_PACKAGE_libqmi=y
 # CONFIG_PACKAGE_libreadline is not set
 # CONFIG_PACKAGE_libroxml is not set
 # CONFIG_PACKAGE_librpc is not set
@@ -2988,7 +2999,7 @@ CONFIG_PACKAGE_snmpd=y
 # CONFIG_PACKAGE_tcpdump is not set
 # CONFIG_PACKAGE_tcpdump-mini is not set
 # CONFIG_PACKAGE_uclient-fetch is not set
-CONFIG_PACKAGE_uqmi=y
+# CONFIG_PACKAGE_uqmi is not set
 # CONFIG_PACKAGE_vnstat is not set
 # CONFIG_PACKAGE_wpa-supplicant is not set
 CONFIG_WPA_MSG_MIN_PRIORITY=3
@@ -3011,6 +3022,7 @@ CONFIG_DRIVER_11N_SUPPORT=y
 #
 # Filesystem
 #
+# CONFIG_PACKAGE_attr is not set
 # CONFIG_PACKAGE_badblocks is not set
 # CONFIG_PACKAGE_e2fsprogs is not set
 # CONFIG_PACKAGE_fuse-utils is not set
