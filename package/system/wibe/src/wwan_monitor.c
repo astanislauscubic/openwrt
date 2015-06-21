@@ -81,6 +81,7 @@ static void monitor_modem(void)
 {
   if (!sim_is_present())
   {
+    sleep(1);
     syslog(LOG_INFO, "SIM card removed, shutting down modem");
     uqmi_power(false);
     while (!sim_is_present())
