@@ -18,7 +18,7 @@ diff -uNr linux-3.10.49/drivers/leds/Kconfig linux-3.10.49/drivers/leds/Kconfig
 diff -uNr linux-3.10.49/drivers/leds/leds-wibe.c linux-3.10.49/drivers/leds/leds-wibe.c
 --- linux-3.10.49/drivers/leds/leds-wibe.c	1970-01-01 01:00:00.000000000 +0100
 +++ linux-3.10.49/drivers/leds/leds-wibe.c	2015-03-17 15:19:26.238455567 +0000
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,181 @@
 +/*
 + * For the Deltenna WiBE 4G
 + *
@@ -45,12 +45,19 @@ diff -uNr linux-3.10.49/drivers/leds/leds-wibe.c linux-3.10.49/drivers/leds/leds
 +#define LED_GPIO_DATA	12
 +#define LED_GPIO_CLOCK	13
 +#define LED_GPIO_BLANK	14
++#define LED_GPIO_BASE	3
++#define LED_GPIO_CABIN	4
++
++#define BIT_BASE	12
++#define BIT_CABIN	13
 +
 +static struct gpio led_gpios[] = {
 +	{ LED_GPIO_LATCH,	GPIOF_OUT_INIT_LOW, "LED_GPIO_LATCH" },
 +	{ LED_GPIO_DATA,	GPIOF_OUT_INIT_LOW, "LED_GPIO_DATA" },
 +	{ LED_GPIO_CLOCK,	GPIOF_OUT_INIT_LOW, "LED_GPIO_CLOCK" },
 +	{ LED_GPIO_BLANK,	GPIOF_OUT_INIT_LOW, "LED_GPIO_BLANK" },
++	{ LED_GPIO_BASE,	GPIOF_OUT_INIT_LOW, "LED_GPIO_BASE" },
++	{ LED_GPIO_CABIN,	GPIOF_OUT_INIT_LOW, "LED_GPIO_CABIN" },
 +};
 +
 +struct wibe_led {
@@ -72,6 +79,8 @@ diff -uNr linux-3.10.49/drivers/leds/leds-wibe.c linux-3.10.49/drivers/leds/leds
 +	{ .name = "wibe:back:green",	.bit = 9 },
 +	{ .name = "wibe:3g:red",	.bit = 10},
 +	{ .name = "wibe:3g:green",	.bit = 11},
++	{ .name = "wibe:base",		.bit = BIT_BASE},
++	{ .name = "wibe:cabin",		.bit = BIT_CABIN},
 +};
 +
 +static struct wibe_led *
@@ -116,7 +125,12 @@ diff -uNr linux-3.10.49/drivers/leds/leds-wibe.c linux-3.10.49/drivers/leds/leds
 +{
 +	struct wibe_led *wled = led_classdev_to_wibe_led(led_cdev);
 +
-+	write_cat4016(wled->bit, value);
++	if (wled->bit == BIT_BASE)
++		gpio_set_value(LED_GPIO_BASE, !!value);
++	else if (wled->bit == BIT_CABIN)
++		gpio_set_value(LED_GPIO_CABIN, !!value);
++	else
++		write_cat4016(wled->bit, value);
 +}
 +
 +static int wibeled_probe(struct platform_device *pdev)
