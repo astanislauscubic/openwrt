@@ -11,29 +11,12 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
-Release 4.0.0-rc2
+Release 4.0.0
 -----------------
 
-Build Date : 2015-06-15
+Build Date : 2015-06-23
 Locale     : GB
-Checksum   : 6fca8f4348282845bbe068c3d782e558
+Checksum   : 7b54969fbd320c1655f2acccd21b3d8f
 Size       : Size: 4.25 MB (7.69 MB available)
 
-IMPORTANT: When flashing this version ensure "Keep settings" is not ticked. Do
-not attempt to restore configuration files saved from previous versions.
-
-[New Features]
-* Wireless service (LTE/WCDMA) and enabled antennas can be configured for the
-  WAN interface
-* An antenna rescan can be forced from the WAN interface configuration page
-
-[Improvements]
-* Antenna LEDs flash during an antenna scan, red for searching, green for LTE
-  testing and orange for WCDMA testing
-* Fixes to the wibeStatus SNMP reporting
-* IMEI can be viewed from LuCI
-* Improved memory usage and recovery from out of memory conditions
-* Stability improvements
-
-[Known Issues]
-* SNMP does not report the wibeAntennaTable
+Initial release

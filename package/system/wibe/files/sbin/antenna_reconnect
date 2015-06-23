@@ -1,0 +1,4 @@
+#!/bin/sh
+
+/etc/init.d/umtsd stop
+/etc/init.d/umtsd start

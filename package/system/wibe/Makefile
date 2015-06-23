@@ -69,6 +69,8 @@ define Package/wibe/install
 	$(CP) ./files/etc/uci-defaults/03_wifi $(1)/etc/uci-defaults
 	$(CP) ./files/etc/config/myproviders $(1)/etc/config/
 	$(CP) ./files/lib/netifd/proto/qmi.sh $(1)/lib/netifd/proto/
+	$(CP) ./files/sbin/antenna_rescan $(1)/sbin/
+	$(CP) ./files/sbin/antenna_reconnect $(1)/sbin/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/umtsd $(1)/sbin/umtsd
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/wan_monitor $(1)/sbin/wan_monitor
 	$(STRIP) $(1)/sbin/umtsd

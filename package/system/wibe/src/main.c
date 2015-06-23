@@ -533,6 +533,18 @@ static void antenna_led_off(void)
       close(fd);
     }
   }
+
+  int fd = open("/sys/class/leds/wibe:base/trigger", O_WRONLY);
+  assert(fd);
+  int bytes = write(fd, "none", 4);
+  assert(bytes == 4);
+  close(fd);
+
+  fd = open("/sys/class/leds/wibe:cabin/trigger", O_WRONLY);
+  assert(fd);
+  bytes = write(fd, "none", 4);
+  assert(bytes == 4);
+  close(fd);
 }
 
 static void antenna_led_searching(void)
@@ -552,6 +564,18 @@ static void antenna_led_searching(void)
   char filename[128];
   snprintf(filename, 128, "/sys/class/leds/wibe:%s:red/trigger", antenna_name);
   fd = open(filename, O_WRONLY);
+  assert(fd);
+  bytes = write(fd, "heartbeat", strlen("heartbeat"));
+  assert(bytes > 0);
+  close(fd);
+
+  fd = open("/sys/class/leds/wibe:base/trigger", O_WRONLY);
+  assert(fd);
+  bytes = write(fd, "heartbeat", strlen("heartbeat"));
+  assert(bytes > 0);
+  close(fd);
+
+  fd = open("/sys/class/leds/wibe:cabin/trigger", O_WRONLY);
   assert(fd);
   bytes = write(fd, "heartbeat", strlen("heartbeat"));
   assert(bytes > 0);
@@ -636,6 +660,18 @@ static void antenna_led_selected(bool isLTE)
 
   snprintf(filename, 128, "/sys/class/leds/wibe:%s:green/trigger", antenna_name);
   fd = open(filename, O_WRONLY);
+  assert(fd);
+  bytes = write(fd, "default-on", strlen("default-on"));
+  assert(bytes > 0);
+  close(fd);
+
+  fd = open("/sys/class/leds/wibe:base/trigger", O_WRONLY);
+  assert(fd);
+  bytes = write(fd, "default-on", strlen("default-on"));
+  assert(bytes > 0);
+  close(fd);
+
+  fd = open("/sys/class/leds/wibe:cabin/trigger", O_WRONLY);
   assert(fd);
   bytes = write(fd, "default-on", strlen("default-on"));
   assert(bytes > 0);
@@ -977,6 +1013,8 @@ static void event_report_ready(QmiClientNas *object,
       if (qmi_status.antenna_testing)
         antenna_led_testing(interface == QMI_NAS_RADIO_INTERFACE_LTE);
       SET_STATUS(antenna_stats.rssi, -rssi);
+      time_t now = time(NULL);
+      gmtime_r(&now, &qmi_status.antenna_stats.test_time);
       qmi_status.antenna_stats.test_complete = true;
     }
   }
@@ -1047,6 +1085,8 @@ static void signal_strength_ready(QmiClientNas *client,
           if (qmi_status.antenna_testing)
             antenna_led_testing(rssi.radio_interface == QMI_NAS_RADIO_INTERFACE_LTE);
           SET_STATUS(antenna_stats.rssi, -(rssi.rssi));
+          time_t now = time(NULL);
+          gmtime_r(&now, &qmi_status.antenna_stats.test_time);
           qmi_status.antenna_stats.test_complete = true;
         }
       }
@@ -2055,12 +2095,14 @@ gboolean main_check(gpointer data)
             break;
           }
         query_signal_strength();
+        query_serving_system();
         next_state = (changed_beam) ? StateWaitForBeam : StateTestsComplete;
       }
       break;
     case StateWaitForBeam:
       syslog(LOG_DEBUG, "Waiting for antenna test to complete");
       query_signal_strength();
+      query_serving_system();
       if (qmi_status.antenna_stats.test_complete && qmi_status.wan_status == HomeNetwork)
       {
         next_state = StateSaveResults;
