@@ -58,6 +58,7 @@ struct QmiSettings {
   char modes[16];
   char antenna[16];
   int regtimeout;
+  int enable_roaming;
 };
 static struct QmiSettings qmi_settings;
 
@@ -238,7 +239,7 @@ static void luci_write_status(void)
   FILE *lucifile = fopen("/tmp/wibe_luci", "w");
 
   fprintf(lucifile, "local qmi={}\n");
-  fprintf(lucifile, "qmi.service=\"%s\"\n", SignalTypeText[qmi_status.signal_type]);
+  fprintf(lucifile, "qmi.service=\"%s (%s)\"\n", SignalTypeText[qmi_status.signal_type], RegistrationText[qmi_status.wan_status]);
   fprintf(lucifile, "qmi.imsi=\"%s\"\n", qmi_status.imsi);
   fprintf(lucifile, "qmi.imei=\"%s\"\n", qmi_status.imei);
   fprintf(lucifile, "qmi.msisdn=\"%s\"\n", qmi_status.msisdn);
@@ -423,6 +424,8 @@ static int load_settings(void)
   uci_get_string_default("network.wan.antenna", qmi_settings.antenna,
                          sizeof(qmi_settings.antenna), "detect");
   uci_get_int_default("network.wan.regtimeout", &qmi_settings.regtimeout, 60);
+  uci_get_int_default("network.wan.roaming", &qmi_settings.enable_roaming, 0);
+
   return 1;
 }
 
@@ -1007,7 +1010,7 @@ static void event_report_ready(QmiClientNas *object,
       syslog(LOG_ERR, "Unexpected interface: %s", qmi_nas_radio_interface_get_string(interface));
     }
     if (qmi_status.signal_type == qmi_status.antenna_stats.type
-        && qmi_status.wan_status == HomeNetwork
+        && (qmi_status.wan_status == HomeNetwork || qmi_status.wan_status == RoamingNetwork)
         && rssi != 0)
     {
       if (qmi_status.antenna_testing)
@@ -1080,7 +1083,7 @@ static void signal_strength_ready(QmiClientNas *client,
           (rssi.radio_interface == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma))
       {
         syslog(LOG_DEBUG, "RSSI: %d (%s)", -(rssi.rssi), qmi_nas_radio_interface_get_string(rssi.radio_interface));
-        if (qmi_status.wan_status == HomeNetwork && rssi.rssi != 0)
+        if ((qmi_status.wan_status == HomeNetwork || qmi_status.wan_status == RoamingNetwork) && rssi.rssi != 0)
         {
           if (qmi_status.antenna_testing)
             antenna_led_testing(rssi.radio_interface == QMI_NAS_RADIO_INTERFACE_LTE);
@@ -1157,6 +1160,8 @@ static void serving_system_indication_ready(QmiClientNas *object,
     (output, &registration_state, &cs_attach_state, &ps_attach_state,
      &selected_network, &radio_interfaces, NULL))
   {
+    QmiNasRoamingIndicatorStatus roaming_indicator = QMI_NAS_ROAMING_INDICATOR_STATUS_OFF;
+    qmi_indication_nas_serving_system_output_get_roaming_indicator(output, &roaming_indicator, NULL);
     for (size_t i = 0; i < radio_interfaces->len; ++i)
     {
       bool isValid = false;
@@ -1174,7 +1179,16 @@ static void serving_system_indication_ready(QmiClientNas *object,
             SET_STATUS(wan_status, NoService);
             break;
           case QMI_NAS_REGISTRATION_STATE_REGISTERED:
-            SET_STATUS(wan_status, HomeNetwork);
+            {
+              if (roaming_indicator == QMI_NAS_ROAMING_INDICATOR_STATUS_ON)
+              {
+                SET_STATUS(wan_status, RoamingNetwork);
+              }
+              else
+              {
+                SET_STATUS(wan_status, HomeNetwork);
+              }
+            }
             break;
           case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED_SEARCHING:
             SET_STATUS(wan_status, Searching);
@@ -1326,6 +1340,20 @@ static void nas_set_mode(enum SignalType type)
       (input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS, NULL);
     SET_STATUS(signal_type, TypeWcdma);
   }
+
+  GError *error = NULL;
+  if (qmi_settings.enable_roaming)
+    qmi_message_nas_set_system_selection_preference_input_set_roaming_preference
+      (input, QMI_NAS_ROAMING_PREFERENCE_ANY, &error);
+  else
+    qmi_message_nas_set_system_selection_preference_input_set_roaming_preference
+      (input, QMI_NAS_ROAMING_PREFERENCE_OFF, &error);
+  if (error)
+  {
+    syslog(LOG_ERR, "Failed to set roaming status: %s", error->message);
+    g_error_free(error);
+  }
+
   SET_STATUS(wan_status, NoService);
 
   qmi_client_nas_set_system_selection_preference
@@ -2103,7 +2131,7 @@ gboolean main_check(gpointer data)
       syslog(LOG_DEBUG, "Waiting for antenna test to complete");
       query_signal_strength();
       query_serving_system();
-      if (qmi_status.antenna_stats.test_complete && qmi_status.wan_status == HomeNetwork)
+      if (qmi_status.antenna_stats.test_complete && (qmi_status.wan_status == HomeNetwork || qmi_status.wan_status == RoamingNetwork))
       {
         next_state = StateSaveResults;
       }
@@ -2148,7 +2176,7 @@ gboolean main_check(gpointer data)
       next_state = StateRegisterWait;
       break;
     case StateRegisterWait:
-      if (qmi_status.wan_status == HomeNetwork)
+      if (qmi_status.wan_status == HomeNetwork || qmi_status.wan_status == RoamingNetwork)
         next_state = StateDataConnect;
       else if (time(NULL) - qmi_status.registration_start > 2*qmi_settings.regtimeout)
       {
@@ -2160,7 +2188,7 @@ gboolean main_check(gpointer data)
       break;
     case StateDataConnect:
       syslog(LOG_DEBUG, "Connecting to data service");
-      if (qmi_status.wan_status != HomeNetwork)
+      if (qmi_status.wan_status != HomeNetwork && qmi_status.wan_status != RoamingNetwork)
       {
         next_state = StateRegister;
       }

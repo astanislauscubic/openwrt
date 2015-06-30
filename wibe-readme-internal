@@ -11,6 +11,22 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.1-rc1
+-----------------
+
+Build Date : 2015-06-30
+Locale     : GB
+Checksum   : 49ac3b63ed4b4f58763d6437ef7e9a0a
+Size       : Size: 4.25 MB (7.69 MB available)
+
+[New Features]
+* Support for roaming networks can be enabled in Interfaces -> WAN (disabled by
+  default)
+
+[Improvements]
+
+[Known Issues]
+
 Release 4.0.0
 -----------------
 
