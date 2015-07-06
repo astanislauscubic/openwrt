@@ -59,17 +59,22 @@ struct QmiSettings {
   char antenna[16];
   int regtimeout;
   int enable_roaming;
+  int debug;
+  QmiDmsLteBandCapability lte_bands;
+  QmiDmsBandCapability bands;
 };
 static struct QmiSettings qmi_settings;
 
 static void print_settings(void)
 {
-  fprintf(stderr, "Protocol:    %s\n", qmi_settings.proto);
-  fprintf(stderr, "Device:      %s\n", qmi_settings.device);
-  fprintf(stderr, "Pincode:     %s\n", qmi_settings.pincode);
-  fprintf(stderr, "Modes:       %s\n", qmi_settings.modes);
-  fprintf(stderr, "Antenna:     %s\n", qmi_settings.antenna);
-  fprintf(stderr, "Reg Timeout: %d\n", qmi_settings.regtimeout);
+  syslog(LOG_DEBUG, "Protocol:    %s", qmi_settings.proto);
+  syslog(LOG_DEBUG, "Device:      %s", qmi_settings.device);
+  syslog(LOG_DEBUG, "Pincode:     %s", qmi_settings.pincode);
+  syslog(LOG_DEBUG, "Modes:       %s", qmi_settings.modes);
+  syslog(LOG_DEBUG, "Antenna:     %s", qmi_settings.antenna);
+  syslog(LOG_DEBUG, "Reg Timeout: %d", qmi_settings.regtimeout);
+  syslog(LOG_DEBUG, "Roaming:     %d", qmi_settings.enable_roaming);
+  syslog(LOG_DEBUG, "Debug:       %d", qmi_settings.debug);
 }
 
 static void snmp_write_string(FILE *snmpfile, const char *key, const char *value)
@@ -425,6 +430,7 @@ static int load_settings(void)
                          sizeof(qmi_settings.antenna), "detect");
   uci_get_int_default("network.wan.regtimeout", &qmi_settings.regtimeout, 60);
   uci_get_int_default("network.wan.roaming", &qmi_settings.enable_roaming, 0);
+  uci_get_int_default("network.wan.umtsddebug", &qmi_settings.debug, 0);
 
   return 1;
 }
@@ -971,13 +977,15 @@ static void nas_event_report_ready(QmiDevice *dev, GAsyncResult *res)
   QmiMessageNasSetEventReportOutput *output = NULL;
   output = qmi_client_nas_set_event_report_finish(nas_client, res, &error);
 
-  if (!output) {
+  if (!output)
+  {
     syslog(LOG_ERR, "Failed to finish nas report: %s", error->message);
     g_error_free(error);
     qmi_error();
   }
 
-  if (!qmi_message_nas_set_event_report_output_get_result(output, &error)) {
+  if (!qmi_message_nas_set_event_report_output_get_result(output, &error))
+  {
     syslog(LOG_ERR, "Failed to check nas report : %s", error->message);
     g_error_free(error);
     qmi_error();
@@ -985,6 +993,25 @@ static void nas_event_report_ready(QmiDevice *dev, GAsyncResult *res)
 
   if (output)
     qmi_message_nas_set_event_report_output_unref(output);
+}
+
+static void nas_register_indications_ready(QmiClientNas *client, GAsyncResult *res)
+{
+  GError *error = NULL;
+
+  QmiMessageNasRegisterIndicationsOutput *output;
+  output = qmi_client_nas_register_indications_finish(client, res, &error);
+  if (!output)
+  {
+    syslog(LOG_ERR, "Failed to finish nas register indications: %s", error->message);
+    g_error_free(error);
+    return;
+  }
+
+  if (!qmi_message_nas_register_indications_output_get_result(output, &error))
+    syslog(LOG_ERR, "Failed to set nas register indications: %s", error->message);
+
+  qmi_message_nas_register_indications_output_unref(output);
 }
 
 static void event_report_ready(QmiClientNas *object,
@@ -1043,7 +1070,7 @@ static void event_report_ready(QmiClientNas *object,
     SET_STATUS(antenna_stats.rsrq, rsrq);
   }
 
-  int8_t ecio;
+  uint8_t ecio;
   if (qmi_indication_nas_event_report_output_get_ecio(output, &ecio, &interface, NULL))
   {
     syslog(LOG_DEBUG, "ECIO: %d (%s)", ecio, qmi_nas_radio_interface_get_string(interface));
@@ -1054,6 +1081,16 @@ static void event_report_ready(QmiClientNas *object,
   if (qmi_indication_nas_event_report_output_get_signal_strength(output, &strength, &interface, NULL))
   {
     syslog(LOG_DEBUG, "Strength: %d (%s)", strength, qmi_nas_radio_interface_get_string(interface));
+  }
+
+  QmiNasNetworkServiceDomain registration_reject_reason_service_domain;
+  guint16 registration_reject_reason_reject_cause;
+  if (qmi_indication_nas_event_report_output_get_registration_reject_reason
+      (output, &registration_reject_reason_service_domain, &registration_reject_reason_reject_cause, NULL))
+  {
+    syslog(LOG_WARNING, "Registration rejected for %s: %d",
+           qmi_nas_network_service_domain_get_string(registration_reject_reason_service_domain),
+           registration_reject_reason_reject_cause);
   }
 }
 
@@ -1166,13 +1203,14 @@ static void serving_system_indication_ready(QmiClientNas *object,
     {
       bool isValid = false;
       QmiNasRadioInterface intf = g_array_index(radio_interfaces, QmiNasRadioInterface, i);
-      syslog(LOG_DEBUG, "Network status for %d %s %s", intf, qmi_nas_radio_interface_get_string(intf), qmi_nas_registration_state_get_string(registration_state));
+      syslog(LOG_DEBUG, "Network status indication (%d) for %d %s %s", i, intf, qmi_nas_radio_interface_get_string(intf), qmi_nas_registration_state_get_string(registration_state));
       if (intf == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte)
         isValid = true;
       else if (intf == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma)
         isValid = true;
 
       if (isValid)
+      {
         switch (registration_state)
         {
           case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED:
@@ -1200,6 +1238,13 @@ static void serving_system_indication_ready(QmiClientNas *object,
             SET_STATUS(wan_status, NoService);
             break;
         }
+        uint32_t cid;
+        if (qmi_indication_nas_serving_system_output_get_cid_3gpp(output, &cid, NULL))
+          qmi_status.antenna_stats.cid = cid;
+        uint16_t lac;
+        if (qmi_indication_nas_serving_system_output_get_lac_3gpp(output, &lac, NULL))
+          qmi_status.antenna_stats.lac = lac;
+      }
     }
   }
 }
@@ -1229,11 +1274,13 @@ static void serving_system_ready(QmiClientNas *client,
     (output, &registration_state, &cs_attach_state, &ps_attach_state,
      &selected_network, &radio_interfaces, NULL))
   {
+    QmiNasRoamingIndicatorStatus roaming_indicator = QMI_NAS_ROAMING_INDICATOR_STATUS_OFF;
+    qmi_message_nas_get_serving_system_output_get_roaming_indicator(output, &roaming_indicator, NULL);
     for (size_t i = 0; i < radio_interfaces->len; ++i)
     {
       bool isValid = false;
       QmiNasRadioInterface intf = g_array_index(radio_interfaces, QmiNasRadioInterface, i);
-      syslog(LOG_DEBUG, "Network status for %d %s %s", intf, qmi_nas_radio_interface_get_string(intf), qmi_nas_registration_state_get_string(registration_state));
+      syslog(LOG_DEBUG, "Network status request (%d) for %d %s %s", i, intf, qmi_nas_radio_interface_get_string(intf), qmi_nas_registration_state_get_string(registration_state));
       if (qmi_status.signal_type == TypeUnknown)
       {
         qmi_status.signal_type = (intf == QMI_NAS_RADIO_INTERFACE_LTE) ? TypeLte : TypeWcdma;
@@ -1251,7 +1298,14 @@ static void serving_system_ready(QmiClientNas *client,
             SET_STATUS(wan_status, NoService);
             break;
           case QMI_NAS_REGISTRATION_STATE_REGISTERED:
-            SET_STATUS(wan_status, HomeNetwork);
+            if (roaming_indicator == QMI_NAS_ROAMING_INDICATOR_STATUS_ON)
+            {
+              SET_STATUS(wan_status, RoamingNetwork);
+            }
+            else
+            {
+              SET_STATUS(wan_status, HomeNetwork);
+            }
             break;
           case QMI_NAS_REGISTRATION_STATE_NOT_REGISTERED_SEARCHING:
             SET_STATUS(wan_status, Searching);
@@ -1263,28 +1317,12 @@ static void serving_system_ready(QmiClientNas *client,
             SET_STATUS(wan_status, NoService);
             break;
         }
-        error = NULL;
         uint32_t cid;
-        if (qmi_message_nas_get_serving_system_output_get_cid_3gpp(output, &cid, &error))
-        {
+        if (qmi_message_nas_get_serving_system_output_get_cid_3gpp(output, &cid, NULL))
           qmi_status.antenna_stats.cid = cid;
-        }
-        else
-        {
-          syslog(LOG_WARNING, "Failed to get CID: %s", error->message);
-          g_error_free(error);
-        }
-        error = NULL;
         uint16_t lac;
-        if (qmi_message_nas_get_serving_system_output_get_lac_3gpp(output, &lac, &error))
-        {
+        if (qmi_message_nas_get_serving_system_output_get_lac_3gpp(output, &lac, NULL))
           qmi_status.antenna_stats.lac = lac;
-        }
-        else
-        {
-          syslog(LOG_WARNING, "Failed to get LAC: %s", error->message);
-          g_error_free(error);
-        }
       }
     }
   }
@@ -1321,33 +1359,244 @@ static void signal_info_ready(QmiClientNas *object,
   }
 }
 
+static void system_info_ready(QmiClientNas *object,
+                              QmiIndicationNasSystemInfoOutput *output,
+                              gpointer user_data)
+{
+  syslog(LOG_DEBUG, "Have System Info Indication");
+
+  gboolean lte_system_info_domain_valid;
+  QmiNasNetworkServiceDomain lte_system_info_domain;
+  gboolean lte_system_info_service_capability_valid;
+  QmiNasNetworkServiceDomain lte_system_info_service_capability;
+  gboolean lte_system_info_roaming_status_valid;
+  QmiNasRoamingStatus lte_system_info_roaming_status;
+  gboolean lte_system_info_forbidden_valid;
+  gboolean lte_system_info_forbidden;
+  gboolean lte_system_info_lac_valid;
+  guint16 lte_system_info_lac;
+  gboolean lte_system_info_cid_valid;
+  guint32 lte_system_info_cid;
+  gboolean lte_system_info_registration_reject_info_valid;
+  QmiNasNetworkServiceDomain lte_system_info_registration_reject_domain;
+  guint8 lte_system_info_registration_reject_cause;
+  gboolean lte_system_info_network_id_valid;
+  const gchar *lte_system_info_mcc;
+  const gchar *lte_system_info_mnc;
+  gboolean lte_system_info_tac_valid;
+  guint16 lte_system_info_tac;
+  if (qmi_indication_nas_system_info_output_get_lte_system_info
+      (output, &lte_system_info_domain_valid, &lte_system_info_domain,
+       &lte_system_info_service_capability_valid,
+       &lte_system_info_service_capability, &lte_system_info_roaming_status_valid,
+       &lte_system_info_roaming_status, &lte_system_info_forbidden_valid,
+       &lte_system_info_forbidden, &lte_system_info_lac_valid,
+       &lte_system_info_lac, &lte_system_info_cid_valid, &lte_system_info_cid,
+       &lte_system_info_registration_reject_info_valid,
+       &lte_system_info_registration_reject_domain,
+       &lte_system_info_registration_reject_cause,
+       &lte_system_info_network_id_valid, &lte_system_info_mcc,
+       &lte_system_info_mnc, &lte_system_info_tac_valid, &lte_system_info_tac,
+       NULL))
+  {
+    syslog(LOG_DEBUG, "LTE System Information:");
+    if (lte_system_info_domain_valid)
+      syslog(LOG_DEBUG, "  Service Domain: %s", qmi_nas_network_service_domain_get_string(lte_system_info_domain));
+    if (lte_system_info_service_capability_valid)
+      syslog(LOG_DEBUG, "  Capability: %s", qmi_nas_network_service_domain_get_string(lte_system_info_service_capability));
+    if (lte_system_info_roaming_status_valid)
+      syslog(LOG_DEBUG, "  Roaming Status: %s", qmi_nas_roaming_status_get_string(lte_system_info_roaming_status));
+    if (lte_system_info_forbidden_valid)
+      syslog(LOG_DEBUG, "  Forbidden: %d", lte_system_info_forbidden);
+    if (lte_system_info_lac_valid)
+      syslog(LOG_DEBUG, "  LAC: %d", lte_system_info_lac);
+    if (lte_system_info_cid_valid)
+      syslog(LOG_DEBUG, "  CID: %d", lte_system_info_cid);
+    if (lte_system_info_registration_reject_info_valid)
+      syslog(LOG_DEBUG, "  Rejection for %s %d", qmi_nas_network_service_domain_get_string(lte_system_info_registration_reject_domain), lte_system_info_registration_reject_cause);
+    if (lte_system_info_network_id_valid)
+      syslog(LOG_DEBUG, "  MCC %s, MNC %s", lte_system_info_mcc, lte_system_info_mnc);
+    if (lte_system_info_tac_valid)
+      syslog(LOG_DEBUG, "  TAC: %d", lte_system_info_tac);
+  }
+
+  gboolean wcdma_system_info_domain_valid;
+  QmiNasNetworkServiceDomain wcdma_system_info_domain;
+  gboolean wcdma_system_info_service_capability_valid;
+  QmiNasNetworkServiceDomain wcdma_system_info_service_capability;
+  gboolean wcdma_system_info_roaming_status_valid;
+  QmiNasRoamingStatus wcdma_system_info_roaming_status;
+  gboolean wcdma_system_info_forbidden_valid;
+  gboolean wcdma_system_info_forbidden;
+  gboolean wcdma_system_info_lac_valid;
+  guint16 wcdma_system_info_lac;
+  gboolean wcdma_system_info_cid_valid;
+  guint32 wcdma_system_info_cid;
+  gboolean wcdma_system_info_registration_reject_info_valid;
+  QmiNasNetworkServiceDomain wcdma_system_info_registration_reject_domain;
+  guint8 wcdma_system_info_registration_reject_cause;
+  gboolean wcdma_system_info_network_id_valid;
+  const gchar *wcdma_system_info_mcc;
+  const gchar *wcdma_system_info_mnc;
+  gboolean wcdma_system_info_hs_call_status_valid;
+  QmiNasWcdmaHsService wcdma_system_info_hs_call_status;
+  gboolean wcdma_system_info_hs_service_valid;
+  QmiNasWcdmaHsService wcdma_system_info_hs_service;
+  gboolean wcdma_system_info_primary_scrambling_code_valid;
+  guint16 wcdma_system_info_primary_scrambling_code;
+  if (qmi_indication_nas_system_info_output_get_wcdma_system_info
+      (output, &wcdma_system_info_domain_valid, &wcdma_system_info_domain,
+       &wcdma_system_info_service_capability_valid,
+       &wcdma_system_info_service_capability,
+       &wcdma_system_info_roaming_status_valid,
+       &wcdma_system_info_roaming_status, &wcdma_system_info_forbidden_valid,
+       &wcdma_system_info_forbidden, &wcdma_system_info_lac_valid,
+       &wcdma_system_info_lac, &wcdma_system_info_cid_valid,
+       &wcdma_system_info_cid,
+       &wcdma_system_info_registration_reject_info_valid,
+       &wcdma_system_info_registration_reject_domain,
+       &wcdma_system_info_registration_reject_cause,
+       &wcdma_system_info_network_id_valid, &wcdma_system_info_mcc,
+       &wcdma_system_info_mnc, &wcdma_system_info_hs_call_status_valid,
+       &wcdma_system_info_hs_call_status, &wcdma_system_info_hs_service_valid,
+       &wcdma_system_info_hs_service,
+       &wcdma_system_info_primary_scrambling_code_valid,
+       &wcdma_system_info_primary_scrambling_code, NULL))
+  {
+    syslog(LOG_DEBUG, "WCDMA System Information:");
+    if (wcdma_system_info_domain_valid)
+      syslog(LOG_DEBUG, "  Service Domain: %s", qmi_nas_network_service_domain_get_string(wcdma_system_info_domain));
+    if (wcdma_system_info_service_capability_valid)
+      syslog(LOG_DEBUG, "  Capability: %s", qmi_nas_network_service_domain_get_string(wcdma_system_info_service_capability));
+    if (wcdma_system_info_roaming_status_valid)
+      syslog(LOG_DEBUG, "  Roaming Status: %s", qmi_nas_roaming_status_get_string(wcdma_system_info_roaming_status));
+    if (wcdma_system_info_forbidden_valid)
+      syslog(LOG_DEBUG, "  Forbidden: %d", wcdma_system_info_forbidden);
+    if (wcdma_system_info_lac_valid)
+      syslog(LOG_DEBUG, "  LAC: %d", wcdma_system_info_lac);
+    if (wcdma_system_info_cid_valid)
+      syslog(LOG_DEBUG, "  CID: %d", wcdma_system_info_cid);
+    if (wcdma_system_info_registration_reject_info_valid)
+      syslog(LOG_DEBUG, "  Rejection for %s %d", qmi_nas_network_service_domain_get_string(wcdma_system_info_registration_reject_domain), wcdma_system_info_registration_reject_cause);
+    if (wcdma_system_info_network_id_valid)
+      syslog(LOG_DEBUG, "  MCC %s, MNC %s", wcdma_system_info_mcc, wcdma_system_info_mnc);
+  }
+}
+
+/*static void technology_preference_ready(QmiClientNas *client, GAsyncResult *res)*/
+/*{*/
+  /*GError *error = NULL;*/
+
+  /*QmiMessageNasSetTechnologyPreferenceOutput *output;*/
+  /*output = qmi_client_nas_set_technology_preference_finish(client, res, &error);*/
+  /*if (!output)*/
+  /*{*/
+    /*syslog(LOG_ERR, "Failed to finish techology preference: %s", error->message);*/
+    /*g_error_free(error);*/
+    /*return;*/
+  /*}*/
+
+  /*if (!qmi_message_nas_set_technology_preference_output_get_result(output, &error))*/
+  /*{*/
+    /*syslog(LOG_ERR, "Failed to set techology preference: %s", error->message);*/
+    /*g_error_free(error);*/
+  /*}*/
+
+  /*qmi_message_nas_set_technology_preference_output_unref(output);*/
+/*}*/
+
+/*static void nas_set_technology(enum SignalType type)*/
+/*{*/
+  /*QmiMessageNasSetTechnologyPreferenceInput *input;*/
+  /*input = qmi_message_nas_set_technology_preference_input_new();*/
+
+  /*if (type == TypeLte)*/
+  /*{*/
+    /*syslog(LOG_INFO, "Setting mode to LTE");*/
+    /*qmi_message_nas_set_technology_preference_input_set_current*/
+      /*(input, QMI_NAS_RADIO_TECHNOLOGY_PREFERENCE_LTE, QMI_NAS_PREFERENCE_DURATION_POWER_CYCLE, NULL);*/
+    /*SET_STATUS(signal_type, TypeLte);*/
+  /*}*/
+  /*else if (type == TypeWcdma)*/
+  /*{*/
+    /*syslog(LOG_INFO, "Setting mode to WCDMA");*/
+    /*qmi_message_nas_set_technology_preference_input_set_current*/
+      /*(input, QMI_NAS_RADIO_TECHNOLOGY_PREFERENCE_CDMA_OR_WCDMA, QMI_NAS_PREFERENCE_DURATION_POWER_CYCLE, NULL);*/
+    /*SET_STATUS(signal_type, TypeWcdma);*/
+  /*}*/
+
+  /*SET_STATUS(wan_status, NoService);*/
+
+  /*qmi_client_nas_set_technology_preference*/
+    /*(nas_client, input, 10, cancellable,*/
+     /*(GAsyncReadyCallback)technology_preference_ready, NULL);*/
+
+  /*qmi_message_nas_set_technology_preference_input_unref(input);*/
+/*}*/
+
+static void restrict_bands(QmiDmsLteBandCapability lte_bands, QmiDmsBandCapability bands)
+{
+  QmiMessageNasSetSystemSelectionPreferenceInput *input;
+  input = qmi_message_nas_set_system_selection_preference_input_new();
+
+  gchar *lte_band_str = qmi_dms_lte_band_capability_build_string_from_mask(lte_bands);
+  syslog(LOG_INFO, "Selecting LTE Bands: %s", lte_band_str);
+  g_free(lte_band_str);
+
+  gchar *band_str = qmi_dms_band_capability_build_string_from_mask(bands);
+  syslog(LOG_INFO, "Selecting UMTS Bands: %s", band_str);
+  g_free(band_str);
+
+  qmi_message_nas_set_system_selection_preference_input_set_lte_band_preference
+    (input, lte_bands, NULL);
+
+  qmi_message_nas_set_system_selection_preference_input_set_band_preference
+    (input, bands, NULL);
+
+  qmi_client_nas_set_system_selection_preference
+    (nas_client, input, 10, cancellable,
+     (GAsyncReadyCallback)system_selection_ready, NULL);
+
+  qmi_message_nas_set_system_selection_preference_input_unref (input);
+}
+
 static void nas_set_mode(enum SignalType type)
 {
   QmiMessageNasSetSystemSelectionPreferenceInput *input;
   input = qmi_message_nas_set_system_selection_preference_input_new();
 
+  qmi_message_nas_set_system_selection_preference_input_set_mode_preference
+    (input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS | QMI_NAS_RAT_MODE_PREFERENCE_LTE, NULL);
   if (type == TypeLte)
   {
     syslog(LOG_INFO, "Setting mode to LTE");
-    qmi_message_nas_set_system_selection_preference_input_set_mode_preference
-      (input, QMI_NAS_RAT_MODE_PREFERENCE_LTE, NULL);
+    /*qmi_message_nas_set_system_selection_preference_input_set_mode_preference*/
+      /*(input, QMI_NAS_RAT_MODE_PREFERENCE_LTE, NULL);*/
+    restrict_bands(qmi_settings.lte_bands, 0);
     SET_STATUS(signal_type, TypeLte);
   }
   else if (type == TypeWcdma)
   {
     syslog(LOG_INFO, "Setting mode to WCDMA");
-    qmi_message_nas_set_system_selection_preference_input_set_mode_preference
-      (input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS, NULL);
+    /*qmi_message_nas_set_system_selection_preference_input_set_mode_preference*/
+      /*(input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS, NULL);*/
+    restrict_bands(0, qmi_settings.bands);
     SET_STATUS(signal_type, TypeWcdma);
   }
 
   GError *error = NULL;
-  if (qmi_settings.enable_roaming)
-    qmi_message_nas_set_system_selection_preference_input_set_roaming_preference
-      (input, QMI_NAS_ROAMING_PREFERENCE_ANY, &error);
-  else
+  if (qmi_settings.enable_roaming == 0)
     qmi_message_nas_set_system_selection_preference_input_set_roaming_preference
       (input, QMI_NAS_ROAMING_PREFERENCE_OFF, &error);
+  else if (qmi_settings.enable_roaming == 1)
+    qmi_message_nas_set_system_selection_preference_input_set_roaming_preference
+      (input, QMI_NAS_ROAMING_PREFERENCE_ANY, &error);
+  else if (qmi_settings.enable_roaming == 2)
+    qmi_message_nas_set_system_selection_preference_input_set_roaming_preference
+      (input, QMI_NAS_ROAMING_PREFERENCE_NOT_OFF, &error);
+  else if (qmi_settings.enable_roaming == 3)
+    qmi_message_nas_set_system_selection_preference_input_set_roaming_preference
+      (input, QMI_NAS_ROAMING_PREFERENCE_NOT_FLASHING, &error);
   if (error)
   {
     syslog(LOG_ERR, "Failed to set roaming status: %s", error->message);
@@ -1369,27 +1618,7 @@ static void setup_nas(void)
     g_signal_connect(nas_client, "event-report", G_CALLBACK(event_report_ready), NULL);
     g_signal_connect(nas_client, "serving-system", G_CALLBACK(serving_system_indication_ready), NULL);
     g_signal_connect(nas_client, "signal-info", G_CALLBACK(signal_info_ready), NULL);
-    /*g_signal_connect(nas_client, "system-info", G_CALLBACK(system_info_ready), NULL);*/
-  }
-
-  {
-    QmiMessageNasSetSystemSelectionPreferenceInput *input;
-    input = qmi_message_nas_set_system_selection_preference_input_new();
-
-    /*qmi_message_nas_set_system_selection_preference_input_set_change_duration*/
-      /*(input, QMI_NAS_CHANGE_DURATION_PERMANENT, &error);*/
-
-    qmi_message_nas_set_system_selection_preference_input_set_lte_band_preference
-      (input, QMI_NAS_LTE_BAND_PREFERENCE_EUTRAN_3, NULL);
-
-    qmi_message_nas_set_system_selection_preference_input_set_band_preference
-      (input, QMI_NAS_BAND_PREFERENCE_WCDMA_2100, NULL);
-
-    qmi_client_nas_set_system_selection_preference
-      (nas_client, input, 10, cancellable,
-       (GAsyncReadyCallback)system_selection_ready, NULL);
-
-    qmi_message_nas_set_system_selection_preference_input_unref (input);
+    g_signal_connect(nas_client, "system-info", G_CALLBACK(system_info_ready), NULL);
   }
 
   {
@@ -1413,10 +1642,31 @@ static void setup_nas(void)
     qmi_message_nas_set_event_report_input_set_ecio_indicator
       (input, true, 0, NULL);
 
+    qmi_message_nas_set_event_report_input_set_registration_reject_reason
+      (input, true, NULL);
+
     qmi_client_nas_set_event_report
-      (nas_client, input, 5, NULL, (GAsyncReadyCallback)nas_event_report_ready, NULL);
+      (nas_client, input, QMI_TIMEOUT, NULL, (GAsyncReadyCallback)nas_event_report_ready, NULL);
 
     qmi_message_nas_set_event_report_input_unref(input);
+  }
+
+  {
+    QmiMessageNasRegisterIndicationsInput *input;
+    input = qmi_message_nas_register_indications_input_new();
+
+    qmi_message_nas_register_indications_input_set_rf_band_information(input, true, NULL);
+    qmi_message_nas_register_indications_input_set_managed_roaming(input, true, NULL);
+    qmi_message_nas_register_indications_input_set_signal_info(input, true, NULL);
+    qmi_message_nas_register_indications_input_set_system_info(input, true, NULL);
+    qmi_message_nas_register_indications_input_set_subscription_info(input, true, NULL);
+    qmi_message_nas_register_indications_input_set_serving_system_events(input, true, NULL);
+    qmi_message_nas_register_indications_input_set_system_selection_preference(input, true, NULL);
+
+    qmi_client_nas_register_indications
+      (nas_client, input, QMI_TIMEOUT, NULL, (GAsyncReadyCallback)nas_register_indications_ready, NULL);
+
+    qmi_message_nas_register_indications_input_unref(input);
   }
 }
 
@@ -1593,57 +1843,40 @@ static void revision_ready(QmiClientDms *client, GAsyncResult *res)
   qmi_message_dms_get_revision_output_unref(output);
 }
 
-static void wds_settings_ready(QmiClientWds *client, GAsyncResult *res)
+static void band_capabilities_ready(QmiClientDms *client, GAsyncResult *res)
 {
   GError *error = NULL;
 
-  QmiMessageWdsGetCurrentSettingsOutput *output;
-  output = qmi_client_wds_get_current_settings_finish(client, res, &error);
+  QmiMessageDmsGetBandCapabilitiesOutput *output;
+  output = qmi_client_dms_get_band_capabilities_finish(client, res, &error);
   if (!output)
   {
-    syslog(LOG_ERR, "Failed to finish wds current settings: %s", error->message);
+    syslog(LOG_ERR, "Failed to finish band capabilities: %s", error->message);
     g_error_free(error);
     return;
   }
 
-  if (!qmi_message_wds_get_current_settings_output_get_result(output, &error))
+  if (qmi_message_dms_get_band_capabilities_output_get_result(output, NULL))
   {
-    syslog(LOG_ERR, "Failed to set operating mode (WDS): %s", error->message);
-    g_error_free(error);
+    QmiDmsLteBandCapability lte_band_capability;
+    if (qmi_message_dms_get_band_capabilities_output_get_lte_band_capability
+        (output, &lte_band_capability, NULL))
+    {
+      QmiDmsLteBandCapability supported = QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_2
+                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_3
+                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_4;
+      qmi_settings.lte_bands = supported & lte_band_capability;
+    }
+    QmiDmsBandCapability band_capability;
+    if (qmi_message_dms_get_band_capabilities_output_get_band_capability
+        (output, &band_capability, NULL))
+    {
+      QmiDmsBandCapability supported = QMI_DMS_BAND_CAPABILITY_WCDMA_2100;
+      qmi_settings.bands = supported & band_capability;
+    }
   }
 
-  error = NULL;
-  const gchar *apn_name = NULL;
-  if (qmi_message_wds_get_current_settings_output_get_apn_name(output, &apn_name, NULL))
-  {
-    syslog(LOG_INFO, "Current APN is %s", apn_name);
-  }
-
-  error = NULL;
-  const gchar *username = NULL;
-  if (qmi_message_wds_get_current_settings_output_get_username(output, &username, NULL))
-  {
-    syslog(LOG_INFO, "Current username is %s", username);
-  }
-
-  qmi_message_wds_get_current_settings_output_unref(output);
-}
-
-static void setup_wds(void)
-{
-  QmiMessageWdsGetCurrentSettingsInput *input;
-  input = qmi_message_wds_get_current_settings_input_new();
-
-  QmiWdsGetCurrentSettingsRequestedSettings requested;
-  requested = QMI_WDS_GET_CURRENT_SETTINGS_REQUESTED_SETTINGS_APN_NAME |
-    QMI_WDS_GET_CURRENT_SETTINGS_REQUESTED_SETTINGS_USERNAME;
-
-  qmi_message_wds_get_current_settings_input_set_requested_settings (input, requested, NULL);
-
-  qmi_client_wds_get_current_settings
-    (wds_client, input, QMI_TIMEOUT, cancellable, (GAsyncReadyCallback)wds_settings_ready, NULL);
-
-  qmi_message_wds_get_current_settings_input_unref(input);
+  qmi_message_dms_get_band_capabilities_output_unref(output);
 }
 
 static void setup_dms(void)
@@ -1665,6 +1898,10 @@ static void setup_dms(void)
                                   (GAsyncReadyCallback)model_ready, NULL);
   qmi_client_dms_get_revision(dms_client, NULL, QMI_TIMEOUT, cancellable,
                                   (GAsyncReadyCallback)revision_ready, NULL);
+  qmi_client_dms_get_band_capabilities(dms_client, NULL, QMI_TIMEOUT,
+                                       cancellable,
+                                       (GAsyncReadyCallback)band_capabilities_ready,
+                                       NULL);
 
 }
 
@@ -1692,7 +1929,6 @@ static void allocate_client_ready(QmiDevice *dev, GAsyncResult *res)
       return;
     case QMI_SERVICE_WDS:
       wds_client = QMI_CLIENT_WDS(client);
-      setup_wds();
       return;
     case QMI_SERVICE_UIM:
       uim_client = QMI_CLIENT_UIM(client);
@@ -2056,6 +2292,51 @@ static bool is_beam_enabled(uint8_t beam)
   return strchr(qmi_settings.antenna, '0' + beam);
 }
 
+static void network_register_ready(QmiClientNas *client, GAsyncResult *res)
+{
+  GError *error = NULL;
+
+  QmiMessageNasInitiateNetworkRegisterOutput *output = NULL;
+  output = qmi_client_nas_initiate_network_register_finish(client, res, &error);
+
+  if (!output)
+  {
+    syslog(LOG_ERR, "Failed to finish network registration: %s", error->message);
+    g_error_free(error);
+    return;
+  }
+
+  if (!qmi_message_nas_initiate_network_register_output_get_result(output, &error))
+  {
+    syslog(LOG_ERR, "Registration failed: %s", error->message);
+  }
+  else
+  {
+    syslog(LOG_INFO, "Registration complete");
+  }
+
+  qmi_message_nas_initiate_network_register_output_unref(output);
+}
+
+static void register_network(void)
+{
+  QmiMessageNasInitiateNetworkRegisterInput *input;
+  input = qmi_message_nas_initiate_network_register_input_new();
+
+  /*qmi_message_nas_initiate_network_register_input_set_manual_registration_info_3gpp*/
+    /*(input, 234, 30, QMI_NAS_RADIO_INTERFACE_LTE, NULL);*/
+
+  qmi_message_nas_initiate_network_register_input_set_action
+    (input, QMI_NAS_NETWORK_REGISTER_TYPE_AUTOMATIC, NULL);
+
+  qmi_client_nas_initiate_network_register(nas_client, input, QMI_TIMEOUT,
+                                           cancellable,
+                                           (GAsyncReadyCallback)network_register_ready,
+                                           NULL);
+
+  qmi_message_nas_initiate_network_register_input_unref(input);
+}
+
 gboolean main_check(gpointer data)
 {
   if (wdog_fd != -1)
@@ -2071,6 +2352,7 @@ gboolean main_check(gpointer data)
     case StateStartup:
       {
         syslog(LOG_DEBUG, "UMTSD Startup");
+        restrict_bands(qmi_settings.lte_bands, qmi_settings.bands);
         if (!qmi_status.imsi || strlen(qmi_status.imsi) < 3)
           break;
         for (size_t i = 0; i < BEAM_TEST_COUNT; ++i)
@@ -2122,6 +2404,7 @@ gboolean main_check(gpointer data)
             changed_beam = true;
             break;
           }
+        register_network();
         query_signal_strength();
         query_serving_system();
         next_state = (changed_beam) ? StateWaitForBeam : StateTestsComplete;
@@ -2173,6 +2456,7 @@ gboolean main_check(gpointer data)
       qmi_status.registration_start = time(NULL);
       SET_STATUS(wan_status, NoService);
       query_serving_system();
+      register_network();
       next_state = StateRegisterWait;
       break;
     case StateRegisterWait:
@@ -2260,7 +2544,6 @@ int main(int argc, char **argv)
   char syslog_name[32];
   snprintf(syslog_name, 32, "umtsd[%d]", getpid());
   openlog(syslog_name, LOG_PERROR, LOG_DAEMON);
-  setlogmask(LOG_UPTO(LOG_INFO));
 
   if (signal(SIGUSR1, sig_handler) == SIG_ERR)
     syslog(LOG_ERR, "Failed to register SIGUSR1 handler");
@@ -2281,6 +2564,12 @@ int main(int argc, char **argv)
     syslog(LOG_ERR, "Invalid WAN settings for QMI");
     exit(1);
   }
+
+  if (qmi_settings.debug)
+    setlogmask(LOG_UPTO(LOG_DEBUG));
+  else
+    setlogmask(LOG_UPTO(LOG_INFO));
+
   print_settings();
 
   setlocale(LC_ALL, "");
