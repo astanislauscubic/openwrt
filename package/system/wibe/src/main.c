@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #define __USE_GNU
 
+#include <sys/timerfd.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -62,6 +63,7 @@ struct QmiSettings {
   int debug;
   QmiDmsLteBandCapability lte_bands;
   QmiDmsBandCapability bands;
+  int download_test;
 };
 static struct QmiSettings qmi_settings;
 
@@ -75,6 +77,7 @@ static void print_settings(void)
   syslog(LOG_DEBUG, "Reg Timeout: %d", qmi_settings.regtimeout);
   syslog(LOG_DEBUG, "Roaming:     %d", qmi_settings.enable_roaming);
   syslog(LOG_DEBUG, "Debug:       %d", qmi_settings.debug);
+  syslog(LOG_DEBUG, "Download:    %d", qmi_settings.download_test);
 }
 
 static void snmp_write_string(FILE *snmpfile, const char *key, const char *value)
@@ -189,6 +192,7 @@ struct AntennaResult {
   int rsrq;
   int rsrp;
   int snr;
+  unsigned long download_bytes;
 };
 
 struct QmiStatus {
@@ -210,6 +214,8 @@ struct QmiStatus {
   const char *manufacturer;
   const char *model;
   const char *revision;
+  size_t download_tests_remaining;
+  size_t download_tests_complete;
 };
 static struct QmiStatus qmi_status;
 
@@ -237,6 +243,9 @@ static void qmi_clear_status(void)
 
   qmi_status.packet_data_handle = 0xffffffff;
   qmi_status.antenna_testing = false;
+
+  qmi_status.download_tests_remaining = 0;
+  qmi_status.download_tests_complete = 0;
 }
 
 static void luci_write_status(void)
@@ -431,6 +440,7 @@ static int load_settings(void)
   uci_get_int_default("network.wan.regtimeout", &qmi_settings.regtimeout, 60);
   uci_get_int_default("network.wan.roaming", &qmi_settings.enable_roaming, 0);
   uci_get_int_default("network.wan.umtsddebug", &qmi_settings.debug, 0);
+  uci_get_int_default("network.wan.download_test", &qmi_settings.download_test, 0);
 
   return 1;
 }
@@ -737,12 +747,21 @@ struct AntennaResult *antenna_max(struct AntennaResult *a,
   return a;
 }
 
+static const struct AntennaResult *antenna_find_best_of_type(enum SignalType type)
+{
+  struct AntennaResult *best = NULL;
+  for (size_t antenna = 0; antenna < ANTENNAS; ++antenna)
+    best = antenna_max(best, &antenna_results[type][antenna]);
+  return best;
+}
+
 static const struct AntennaResult *antenna_find_best(void)
 {
   struct AntennaResult *best = NULL;
-  for (size_t type = 0; type < TypeCount; ++type)
-    for (size_t antenna = 0; antenna < ANTENNAS; ++antenna)
-      best = antenna_max(best, &antenna_results[type][antenna]);
+  for (size_t antenna = 0; antenna < ANTENNAS; ++antenna)
+    best = antenna_max(best, &antenna_results[TypeWcdma][antenna]);
+  for (size_t antenna = 0; antenna < ANTENNAS; ++antenna)
+    best = antenna_max(best, &antenna_results[TypeLte][antenna]);
   return best;
 }
 
@@ -2208,6 +2227,7 @@ enum State {
   StateTryApn,
   StateDataConnectWait,
   StateMonitorData,
+  StateDownloadTest,
   StateCount,
 };
 
@@ -2337,8 +2357,93 @@ static void register_network(void)
   qmi_message_nas_initiate_network_register_input_unref(input);
 }
 
+char *interface_byte_count(const char *interface, int field)
+{
+  static char line[1024];
+  char *token = NULL;
+  int count;
+  int done = 0;
+  FILE *proc_file;
+
+  if (!interface) return NULL;
+
+  proc_file = fopen("/proc/net/dev", "r");
+  if (proc_file == NULL) return NULL;
+
+  fgets(line, 1024, proc_file);
+  while (!feof(proc_file) && !done)
+  {
+    token = strtok(line, " :");
+
+    if (token != NULL && strcmp(token, interface) == 0) {
+      for (count = 0; count < field; ++count) {
+        token = strtok(NULL, " :");
+      }
+      done = 1;
+    }
+    else
+      fgets(line, 1024, proc_file);
+  }
+
+  fclose (proc_file);
+  if (done) return token;
+
+  return NULL;
+}
+
+long long download_byte_count(const char *interface)
+{
+  char *token = interface_byte_count("wwan0", 1);
+  if (token == NULL) return -1;
+
+  return strtoll(token, NULL, 10);
+}
+
+static int open_timer(time_t startup_delay_s, long interval_s)
+{
+  int fd = timerfd_create(CLOCK_MONOTONIC, 0);
+  if (fd < 0)
+    return -1;
+
+  struct itimerspec timer = {
+    .it_interval = {.tv_sec = interval_s, .tv_nsec = 0},
+    .it_value = {.tv_sec = startup_delay_s, .tv_nsec = 0}
+  };
+
+  int err = timerfd_settime(fd, 0, &timer, NULL);
+  if (err < 0)
+    return -1;
+
+  return fd;
+}
+
+static void wait_for_timer(int timer_fd)
+{
+  uint64_t exp;
+  int err = read(timer_fd, &exp, sizeof(uint64_t));
+  assert(err == sizeof(uint64_t));
+}
+
+static void start_download(int threads, const char *host, const char *file)
+{
+  char *command;
+
+  asprintf(&command,
+           "for i in `seq %d`; do ( /usr/sbin/download_data %s \"%s\" & ); done",
+           threads, host, file);
+  system(command);
+  sleep(1);
+  free(command);
+}
+
+void stop_download(void)
+{
+  system("killall download_data");
+}
+
 gboolean main_check(gpointer data)
 {
+  static int timer_fd;
   if (wdog_fd != -1)
     write(wdog_fd, "w", 1);
 
@@ -2359,6 +2464,9 @@ gboolean main_check(gpointer data)
           if (is_mode_enabled(beam_tests[i].type))
             if (is_beam_enabled(beam_tests[i].beam))
               beam_tests[i].included = true;
+
+        qmi_status.download_tests_complete = 0;
+        qmi_status.download_tests_remaining = 0;
 
         query_data_connection();
         disable_autoconnect();
@@ -2440,7 +2548,33 @@ gboolean main_check(gpointer data)
     case StateTestsComplete:
       {
         qmi_status.antenna_testing = false;
-        const struct AntennaResult *antenna = antenna_find_best();
+        const struct AntennaResult *antenna = NULL;
+        if (qmi_status.download_tests_remaining & (1 << TypeLte))
+        {
+          // Remaining LTE download test
+          antenna = antenna_find_best_of_type(TypeLte);
+        }
+        else if (qmi_settings.download_test > 0 && !qmi_status.download_tests_complete)
+        {
+          const struct AntennaResult *best_wcdma;
+          const struct AntennaResult *best_lte;
+          best_wcdma = antenna_find_best_of_type(TypeWcdma);
+          best_lte = antenna_find_best_of_type(TypeLte);
+          if (best_wcdma && best_lte)
+          {
+            antenna = best_wcdma;
+            qmi_status.download_tests_remaining = (1 << TypeLte) | (1 << TypeWcdma);
+          }
+          else
+          {
+            syslog(LOG_INFO, "Download test requires WCDMA and LTE service, skipping...");
+            antenna = antenna_find_best();
+          }
+        }
+        else
+        {
+          antenna = antenna_find_best();
+        }
         syslog(LOG_INFO, "Selected antenna %s (%s)", AntennaText[antenna->antenna],
                SignalTypeText[antenna->type]);
         nas_set_mode(antenna->type);
@@ -2507,11 +2641,60 @@ gboolean main_check(gpointer data)
           && qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_CONNECTED)
       {
         net_renew_lease();
-        next_state = StateMonitorData;
+        if (qmi_status.download_tests_remaining)
+          next_state = StateDownloadTest;
+        else
+          next_state = StateMonitorData;
       }
       else if (qmi_status.packet_data_handle == 0xffffffff)
       {
         next_state = StateTryApn;
+      }
+      break;
+    case StateDownloadTest:
+      {
+        int threads = 3;
+        const char *hostname = "172.17.13.123";
+        const char *filename = "/16MB.bin";
+        start_download(threads, hostname, filename);
+
+        long long last_byte_count = download_byte_count("wwan0");
+        timer_fd = open_timer(1, 1);
+        if (timer_fd < 0)
+        {
+          perror("Failed to open timerfd");
+          stop_download();
+          return 1;
+        }
+
+        long long latest_byte_count;
+        long long downloaded;
+        double mbps;
+        const size_t measurements = 2;
+        for (size_t i = 0; i < measurements; ++i)
+        {
+          wait_for_timer(timer_fd);
+          latest_byte_count = download_byte_count("wwan0");
+          downloaded = latest_byte_count - last_byte_count;
+          mbps = ((downloaded/(measurements+1.0) * 8.0) / 1024.0 / 1024.0);
+          syslog(LOG_INFO, "Downloaded %lli bytes, %.02f Mbps\n", downloaded, mbps);
+        }
+
+        stop_download();
+        close(timer_fd);
+
+        syslog(LOG_INFO, "Download test complete for %s", SignalTypeText[qmi_status.signal_type]);
+        qmi_status.download_tests_remaining &= ~(1 << qmi_status.signal_type);
+        qmi_status.download_tests_complete |= (1 << qmi_status.signal_type);
+        if (qmi_status.download_tests_remaining)
+        {
+          stop_network();
+          next_state = StateTestsComplete;
+        }
+        else
+        {
+          next_state = StateMonitorData;
+        }
       }
       break;
     case StateMonitorData:

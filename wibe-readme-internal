@@ -16,6 +16,22 @@ Release 4.0.1-rc1
 
 Build Date : 2015-06-30
 Locale     : GB
+Checksum   : 
+Size       : Size: 4.25 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Verbose logs option in WAN Interface settings
+* Changes to roaming
+
+[Known Issues]
+
+Release 4.0.1-rc1
+-----------------
+
+Build Date : 2015-06-30
+Locale     : GB
 Checksum   : 49ac3b63ed4b4f58763d6437ef7e9a0a
 Size       : Size: 4.25 MB (7.69 MB available)
 
