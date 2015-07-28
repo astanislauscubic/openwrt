@@ -64,6 +64,7 @@ struct QmiSettings {
   QmiDmsLteBandCapability lte_bands;
   QmiDmsBandCapability bands;
   int download_test;
+  int domain;
 };
 static struct QmiSettings qmi_settings;
 
@@ -78,6 +79,7 @@ static void print_settings(void)
   syslog(LOG_DEBUG, "Roaming:     %d", qmi_settings.enable_roaming);
   syslog(LOG_DEBUG, "Debug:       %d", qmi_settings.debug);
   syslog(LOG_DEBUG, "Download:    %d", qmi_settings.download_test);
+  syslog(LOG_DEBUG, "Domain:      %d", qmi_settings.domain);
 }
 
 static void snmp_write_string(FILE *snmpfile, const char *key, const char *value)
@@ -253,20 +255,20 @@ static void luci_write_status(void)
   FILE *lucifile = fopen("/tmp/wibe_luci", "w");
 
   fprintf(lucifile, "local qmi={}\n");
-  fprintf(lucifile, "qmi.service=\"%s (%s)\"\n", SignalTypeText[qmi_status.signal_type], RegistrationText[qmi_status.wan_status]);
+  fprintf(lucifile, "qmi.service=\"%s (%s)\"\n", SignalTypeText[qmi_status.antenna_stats.type], RegistrationText[qmi_status.wan_status]);
   fprintf(lucifile, "qmi.imsi=\"%s\"\n", qmi_status.imsi);
   fprintf(lucifile, "qmi.imei=\"%s\"\n", qmi_status.imei);
   fprintf(lucifile, "qmi.msisdn=\"%s\"\n", qmi_status.msisdn);
   fprintf(lucifile, "qmi.antenna=\"%s\"\n", AntennaText[qmi_status.active_antenna]);
   fprintf(lucifile, "qmi.rssi=\"%d\"\n", qmi_status.antenna_stats.rssi);
-  if (qmi_status.signal_type == TypeLte)
+  if (qmi_status.antenna_stats.type == TypeLte)
   {
     fprintf(lucifile, "qmi.ecio=\"N/A\"\n");
     fprintf(lucifile, "qmi.rsrp=\"%d\"\n", qmi_status.antenna_stats.rsrp);
     fprintf(lucifile, "qmi.rsrq=\"%d\"\n", qmi_status.antenna_stats.rsrq);
     fprintf(lucifile, "qmi.snr=\"%d\"\n", qmi_status.antenna_stats.snr);
   }
-  else if (qmi_status.signal_type == TypeWcdma)
+  else if (qmi_status.antenna_stats.type == TypeWcdma)
   {
     fprintf(lucifile, "qmi.ecio=\"%d\"\n", qmi_status.antenna_stats.ecio);
     fprintf(lucifile, "qmi.rsrp=\"N/A\"\n");
@@ -311,18 +313,18 @@ static void snmp_write_status(void)
 
   struct AntennaResult *result = &qmi_status.antenna_stats;
   snmp_write_int(snmpfile, "1S261.0", result->rssi);
-  if (qmi_status.signal_type == TypeLte)
+  if (qmi_status.antenna_stats.type == TypeLte)
   {
     snmp_write_int(snmpfile, "1S265.0", result->rsrp);
     snmp_write_int(snmpfile, "1S266.0", result->rsrq);
     snmp_write_int(snmpfile, "1S267.0", result->snr);
   }
-  else if (qmi_status.signal_type == TypeWcdma)
+  else if (qmi_status.antenna_stats.type == TypeWcdma)
   {
     snmp_write_int(snmpfile, "1S262.0", result->ecio);
   }
 
-  snmp_write_string(snmpfile, "1S264.0", SignalTypeText[qmi_status.signal_type]);
+  snmp_write_string(snmpfile, "1S264.0", SignalTypeText[qmi_status.antenna_stats.type]);
 
   snmp_write_int(snmpfile, "1S773.0", qmi_status.antenna_stats.cid);
   snmp_write_int(snmpfile, "1S774.0", qmi_status.antenna_stats.lac);
@@ -441,6 +443,8 @@ static int load_settings(void)
   uci_get_int_default("network.wan.roaming", &qmi_settings.enable_roaming, 0);
   uci_get_int_default("network.wan.umtsddebug", &qmi_settings.debug, 0);
   uci_get_int_default("network.wan.download_test", &qmi_settings.download_test, 0);
+  uci_get_int_default("network.wan.domain", &qmi_settings.domain,
+                      QMI_NAS_SERVICE_DOMAIN_PREFERENCE_CS_PS);
 
   return 1;
 }
@@ -1589,18 +1593,20 @@ static void nas_set_mode(enum SignalType type)
   if (type == TypeLte)
   {
     syslog(LOG_INFO, "Setting mode to LTE");
-    /*qmi_message_nas_set_system_selection_preference_input_set_mode_preference*/
-      /*(input, QMI_NAS_RAT_MODE_PREFERENCE_LTE, NULL);*/
     restrict_bands(qmi_settings.lte_bands, 0);
     SET_STATUS(signal_type, TypeLte);
   }
   else if (type == TypeWcdma)
   {
     syslog(LOG_INFO, "Setting mode to WCDMA");
-    /*qmi_message_nas_set_system_selection_preference_input_set_mode_preference*/
-      /*(input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS, NULL);*/
     restrict_bands(0, qmi_settings.bands);
     SET_STATUS(signal_type, TypeWcdma);
+  }
+  else
+  {
+    syslog(LOG_INFO, "Setting mode to LTE and WCDMA");
+    restrict_bands(qmi_settings.lte_bands, qmi_settings.bands);
+    SET_STATUS(signal_type, TypeUnknown);
   }
 
   GError *error = NULL;
@@ -1620,6 +1626,19 @@ static void nas_set_mode(enum SignalType type)
   {
     syslog(LOG_ERR, "Failed to set roaming status: %s", error->message);
     g_error_free(error);
+  }
+
+  error = NULL;
+  if (!qmi_message_nas_set_system_selection_preference_input_set_service_domain_preference
+      (input, qmi_settings.domain, &error))
+  {
+    syslog(LOG_ERR, "Failed to set domain preference: %s", error->message);
+    g_error_free(error);
+  }
+  else
+  {
+    syslog(LOG_INFO, "Domain Preference: %s",
+           qmi_nas_service_domain_preference_get_string(qmi_settings.domain));
   }
 
   SET_STATUS(wan_status, NoService);
@@ -1883,7 +1902,8 @@ static void band_capabilities_ready(QmiClientDms *client, GAsyncResult *res)
     {
       QmiDmsLteBandCapability supported = QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_2
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_3
-                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_4;
+                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_4
+                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_25;
       qmi_settings.lte_bands = supported & lte_band_capability;
     }
     QmiDmsBandCapability band_capability;
@@ -2577,7 +2597,7 @@ gboolean main_check(gpointer data)
         }
         syslog(LOG_INFO, "Selected antenna %s (%s)", AntennaText[antenna->antenna],
                SignalTypeText[antenna->type]);
-        nas_set_mode(antenna->type);
+        nas_set_mode(TypeUnknown);
         antenna_select(antenna->antenna, false);
         antenna_led_selected(antenna->type == TypeLte);
         snmp_write_antenna_test();

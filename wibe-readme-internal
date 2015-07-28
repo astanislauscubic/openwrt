@@ -14,9 +14,24 @@ space available.
 Release 4.0.1-rc1
 -----------------
 
-Build Date : 2015-06-30
+Build Date : 2015-07-20
 Locale     : GB
 Checksum   : 
+Size       : Size: 4.25 MB (7.69 MB available)
+
+[New Features]
+* Includes iperf
+
+[Improvements]
+* QMI interface can be restricted to CS, PS or CS_PS
+
+[Known Issues]
+
+Release 4.0.1-rc1
+-----------------
+
+Build Date : 2015-06-30
+Locale     : GB
 Size       : Size: 4.25 MB (7.69 MB available)
 
 [New Features]

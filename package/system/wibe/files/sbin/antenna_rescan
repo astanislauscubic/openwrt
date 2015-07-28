@@ -1,5 +1,5 @@
 #!/bin/sh
 
 /etc/init.d/umtsd stop
-rm /tmp/connected
+rm -f /tmp/connected
 /etc/init.d/umtsd start
