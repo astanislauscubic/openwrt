@@ -11,6 +11,42 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.1-rc5
+-----------------
+
+Build Date : 2015-07-30
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.25 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Antenna scan completes and selects best antenna
+
+[Known Issues]
+* Restricting modem to WCDMA/LTE will skip the antenna tests but not lock the
+  modem after testing is complete
+
+Release 4.0.1-rc4
+-----------------
+
+Build Date : 2015-07-29
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.25 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Modem autoconnect enabled
+* Voice domain preference set to Data
+
+[Known Issues]
+* Restricting modem to WCDMA/LTE will skip the antenna tests but not lock the
+  modem after testing is complete
+* Antenna scan times out and left antenna is always selected
+
 Release 4.0.1-rc3
 -----------------
 
