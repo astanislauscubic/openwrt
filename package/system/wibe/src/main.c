@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <termios.h>
 #include <stdint.h>
 #include <sys/ioctl.h>
 #include <linux/watchdog.h>
@@ -220,6 +221,9 @@ struct QmiStatus {
   const char *revision;
   size_t download_tests_remaining;
   size_t download_tests_complete;
+  const char *pri_pri;
+  const char *pri_carrier_pri;
+  const char *pri_revision;
 };
 static struct QmiStatus qmi_status;
 
@@ -250,6 +254,10 @@ static void qmi_clear_status(void)
 
   qmi_status.download_tests_remaining = 0;
   qmi_status.download_tests_complete = 0;
+
+  qmi_status.pri_pri = NULL;
+  qmi_status.pri_carrier_pri = NULL;
+  qmi_status.pri_revision = NULL;
 }
 
 static void luci_write_status(void)
@@ -279,6 +287,11 @@ static void luci_write_status(void)
   }
   fprintf(lucifile, "qmi.lac=\"%d\"\n", qmi_status.antenna_stats.lac);
   fprintf(lucifile, "qmi.cid=\"%d\"\n", qmi_status.antenna_stats.cid);
+
+  fprintf(lucifile, "qmi.pripri=\"%s\"\n", qmi_status.pri_pri);
+  fprintf(lucifile, "qmi.pricarrierpri=\"%s\"\n", qmi_status.pri_carrier_pri);
+  fprintf(lucifile, "qmi.prirevision=\"%s\"\n", qmi_status.pri_revision);
+
   fprintf(lucifile, "return qmi\n");
 
 
@@ -2672,6 +2685,267 @@ void stop_download(void)
   system("killall download_data");
 }
 
+#define min(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+           __typeof__ (b) _b = (b); \
+         _a < _b ? _a : _b; })
+
+static bool starts_with(const char * const a, const char * const b)
+{
+  return !strncmp(a, b, min(strlen(a), strlen(b)));
+}
+
+static const char *at_parse_line(const char * const line)
+{
+  const char *rs = NULL;
+
+  if (starts_with(line, "PRI Part Number: "))
+    qmi_status.pri_pri = strdup(line+strlen("PRI Part Number: "));
+  else if (starts_with(line, "Carrier PRI: "))
+    qmi_status.pri_carrier_pri = strdup(line+strlen("Carrier PRI: "));
+  else if (starts_with(line, "Revision: "))
+    qmi_status.pri_revision = strdup(line+strlen("Revision: "));
+  else if (starts_with(line, "+CGAUTH: 1,"))
+  {
+    rs = line+strlen("+CGAUTH: ");
+    syslog(LOG_DEBUG, "Auth: %s", rs);
+  }
+  else if (starts_with(line, "+CGAUTH: "))
+  {
+    /* Throw away all other CGAUTH lines */
+  }
+  else if (starts_with(line, "+CGDCONT: 1,"))
+  {
+    rs = line+strlen("+CGDCONT: ");
+    syslog(LOG_DEBUG, "Context: %s", rs);
+  }
+  else if (starts_with(line, "+CGDCONT: "))
+  {
+    /* Throw away all other CGDCONT lines */
+  }
+  else
+    syslog(LOG_DEBUG, "Read '%s'", line);
+
+  return rs ? strdup(rs) : NULL;
+}
+
+static bool file_is_char_device(const char *filename)
+{
+  struct stat device_stat;
+  lstat(filename, &device_stat);
+  return S_ISCHR(device_stat.st_mode);
+}
+
+static void at_readline(int fd, char *line)
+{
+  size_t lineWrite = 0;
+  while (1)
+  {
+    int n = read(fd, line + lineWrite, 1);
+    lineWrite += n;
+    line[lineWrite] = '\0';
+    if (lineWrite >= 1 && line[lineWrite-1] == '\n')
+    {
+      line[lineWrite-1] = '\0';
+      break;
+    }
+  }
+}
+
+static bool at_is_ok(const char * const line)
+{
+  return !strncmp(line, "OK", 2);
+}
+
+static bool at_is_error(const char * const line)
+{
+  return !strncmp(line, "ERROR", 5);
+}
+
+static bool at_is_empty(const char * const line)
+{
+  return strlen(line) == 0;
+}
+
+static int at_configure(int fd, int speed, int parity)
+{
+  struct termios tty;
+  memset (&tty, 0, sizeof tty);
+  if (tcgetattr (fd, &tty) != 0)
+  {
+    syslog(LOG_ERR, "error %d from tcgetattr", errno);
+    return -1;
+  }
+
+  cfsetospeed (&tty, speed);
+  cfsetispeed (&tty, speed);
+
+  tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
+  tty.c_iflag &= ~IGNBRK;         // disable break processing
+  tty.c_lflag = 0;                // no signaling chars, no echo,
+  tty.c_oflag = 0;                // no remapping, no delays
+  tty.c_cc[VMIN]  = 0;            // read doesn't block
+  tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
+
+  tty.c_iflag &= ~(IXON | IXOFF | IXANY); // shut off xon/xoff ctrl
+
+  tty.c_cflag &= ~(CLOCAL | CREAD);
+  tty.c_cflag &= ~(PARENB | PARODD);      // shut off parity
+  tty.c_cflag |= parity;
+  tty.c_cflag &= ~CSTOPB;
+  tty.c_cflag &= ~CRTSCTS;
+
+  if (tcsetattr (fd, TCSANOW, &tty) != 0)
+  {
+    syslog(LOG_ERR, "error %d from tcsetattr", errno);
+    return -1;
+  }
+  return 0;
+}
+
+static const char* at_run_cmd(int fd, const char * const cmd)
+{
+  syslog(LOG_DEBUG, "AT Run: %s", cmd);
+  write(fd, cmd, strlen(cmd));
+
+  const char *rv = NULL;
+  char line[512];
+  while (1)
+  {
+    at_readline(fd, line);
+    if (at_is_ok(line))
+    {
+      break;
+    }
+    else if (at_is_error(line))
+    {
+      syslog(LOG_ERR, "AT command error: %s %s", cmd, line);
+      break;
+    }
+    else if (!at_is_empty(line))
+    {
+      const char *tmp = at_parse_line(line);
+      if (tmp)
+        rv = tmp;
+    }
+  }
+
+  syslog(LOG_DEBUG, "AT Response: %s", rv ? rv : "");
+  return rv;
+}
+
+#define AT_LEN 256
+
+static void at_set_context(int fd,
+                           const char * const apn,
+                           const char * const username,
+                           const char * const password)
+{
+  char context[AT_LEN];
+  char auth[AT_LEN];
+  snprintf(context, AT_LEN, "1,\"IPV4V6\",\"%s\"", apn);
+
+  int auth_type = 0;
+  if (password && strcmp(password, ""))
+  {
+    if (!username || !strcmp(username, ""))
+    {
+      // CHAP, password only
+      auth_type = 2;
+      snprintf(auth, AT_LEN, "1,%d", auth_type);
+    }
+    else
+    {
+      // PAP, password and username
+      auth_type = 1;
+      snprintf(auth, AT_LEN, "1,%d,\"%s\"", auth_type, username);
+    }
+  }
+  else
+  {
+    // No username/password
+    auth_type = 0;
+    snprintf(auth, AT_LEN, "1,%d", auth_type);
+  }
+
+  const char *current_context = at_run_cmd(fd, "AT+CGDCONT?\r");
+  if (current_context && strncmp(current_context, context, strlen(context)))
+  {
+    free((char*)current_context);
+    char cmd[AT_LEN];
+    snprintf(cmd, AT_LEN, "AT+CGDCONT=%s\r", context);
+    at_run_cmd(fd, cmd);
+
+    current_context = at_run_cmd(fd, "AT+CGDCONT?\r");
+    if (strncmp(current_context, context, strlen(context)))
+      syslog(LOG_ERR, "Failed to set context: %s %s", current_context, context);
+    else
+      syslog(LOG_INFO, "PDP context set: %s", context);
+  }
+  else
+  {
+    syslog(LOG_INFO, "PDP context correct: %s", current_context);
+  }
+  free((char*)current_context);
+
+  const char *current_auth = at_run_cmd(fd, "AT+CGAUTH?\r");
+  if (current_auth && strncmp(current_auth, auth, strlen(auth)))
+  {
+    free((char*)current_auth);
+    char cmd[AT_LEN];
+    switch (auth_type)
+    {
+      case 0:
+        snprintf(cmd, AT_LEN, "AT+CGAUTH=1,0\r");
+        break;
+      case 1:
+        snprintf(cmd, AT_LEN, "AT+CGAUTH=1,1,\"%s\",\"%s\"\r", password, username);
+        break;
+      case 2:
+        snprintf(cmd, AT_LEN, "AT+CGAUTH=1,2,\"%s\"\r", password);
+        break;
+    }
+    at_run_cmd(fd, cmd);
+
+    current_auth = at_run_cmd(fd, "AT+CGAUTH?\r");
+    if (strncmp(current_auth, auth, strlen(auth)))
+      syslog(LOG_DEBUG, "Failed to set auth: %s %s", current_auth, auth);
+    else
+      syslog(LOG_INFO, "PDP auth set: %s", auth);
+  }
+  else
+  {
+    syslog(LOG_INFO, "PDP auth correct: %s", current_auth);
+  }
+  free((char*)current_auth);
+}
+
+static void at_setup(void)
+{
+  const char *port = "/dev/ttyUSB2";
+  if (!file_is_char_device(port))
+    return;
+
+  int fd = open(port, O_RDWR | O_NOCTTY);
+  if (fd < 0)
+  {
+    syslog(LOG_DEBUG, "Failed to open %s: %s", port, strerror(errno));
+    return;
+  }
+
+  at_configure(fd, B115200, 0);
+  at_run_cmd(fd, "ATE0\r");
+
+  at_run_cmd(fd, "AT!PRIID?\r");
+
+
+  sim_apn_generate_list();
+  if (apn_list)
+    at_set_context(fd, apn_list->apn, apn_list->username, apn_list->password);
+
+  close(fd);
+}
+
 gboolean main_check(gpointer data)
 {
   static int timer_fd;
@@ -2695,12 +2969,14 @@ gboolean main_check(gpointer data)
           if (is_mode_enabled(beam_tests[i].type))
             if (is_beam_enabled(beam_tests[i].beam))
               beam_tests[i].included = true;
+        syslog(LOG_DEBUG, "UMTSD Startup 2");
 
         qmi_status.download_tests_complete = 0;
         qmi_status.download_tests_remaining = 0;
 
         query_data_connection();
         disable_autoconnect();
+        at_setup();
         if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_CONNECTED)
           next_state = StateMonitorData;
         else
