@@ -20,6 +20,9 @@
 #include <stdint.h>
 #include <sys/ioctl.h>
 #include <linux/watchdog.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include "settings.h"
 
 #include <glib.h>
@@ -67,6 +70,8 @@ struct QmiSettings {
   QmiDmsBandCapability bands;
   int download_test;
   int domain;
+  int dns_check;
+  int dns_reset;
 };
 static struct QmiSettings qmi_settings;
 
@@ -83,6 +88,7 @@ static void print_settings(void)
   syslog(LOG_DEBUG, "  Debug:       %d", qmi_settings.debug);
   syslog(LOG_DEBUG, "  Download:    %d", qmi_settings.download_test);
   syslog(LOG_DEBUG, "  Domain:      %d", qmi_settings.domain);
+  syslog(LOG_DEBUG, "  DNS Check:   %d", qmi_settings.dns_check);
 }
 
 static void snmp_write_string(FILE *snmpfile, const char *key, const char *value)
@@ -224,6 +230,12 @@ struct QmiStatus {
   const char *pri_pri;
   const char *pri_carrier_pri;
   const char *pri_revision;
+  struct in_addr primary_dns;
+  bool primary_dns_valid;
+  struct in_addr secondary_dns;
+  bool secondary_dns_valid;
+  time_t next_dns_check;
+  bool dns_connected;
 };
 static struct QmiStatus qmi_status;
 
@@ -258,6 +270,11 @@ static void qmi_clear_status(void)
   qmi_status.pri_pri = NULL;
   qmi_status.pri_carrier_pri = NULL;
   qmi_status.pri_revision = NULL;
+
+  qmi_status.primary_dns_valid = false;
+  qmi_status.secondary_dns_valid = false;
+  qmi_status.next_dns_check = 0;
+  qmi_status.dns_connected = false;
 }
 
 static void luci_write_status(void)
@@ -460,6 +477,8 @@ static int load_settings(void)
   uci_get_int_default("network.wan.download_test", &qmi_settings.download_test, 0);
   uci_get_int_default("network.wan.domain", &qmi_settings.domain,
                       QMI_NAS_SERVICE_DOMAIN_PREFERENCE_CS_PS);
+  uci_get_int_default("network.wan.dnscheck", &qmi_settings.dns_check, 60);
+  uci_get_int_default("network.wan.dnsreset", &qmi_settings.dns_reset, 0);
 
   return 1;
 }
@@ -491,11 +510,11 @@ static void uqmi_power(bool powerOn)
 static void uqmi_reset(void)
 {
   uqmi_power(false);
-  sleep(1);
-  uqmi_power(true);
+  /*sleep(1);*/
+  /*uqmi_power(true);*/
 
-  while (!modem_is_present())
-    sleep(1);
+  /*while (!modem_is_present())*/
+    /*sleep(1);*/
 }
 
 static bool sim_is_present(void)
@@ -986,6 +1005,45 @@ static void pin_status_ready(QmiClientDms *client, GAsyncResult *res)
   qmi_message_dms_uim_get_pin_status_output_unref(status);
 }
 
+static void wds_settings_ready(QmiClientWds *client,
+                                 GAsyncResult *res)
+{
+  GError *error = NULL;
+
+  QmiMessageWdsGetCurrentSettingsOutput *output;
+  output = qmi_client_wds_get_current_settings_finish(client, res, &error);
+
+  if (!output)
+  {
+    syslog(LOG_ERR, "Failed to finish wds settings: %s", error->message);
+    g_error_free(error);
+    return;
+  }
+
+  if (!qmi_message_wds_get_current_settings_output_get_result(output, &error))
+  {
+    syslog(LOG_ERR, "Failed to get wds settings: %s", error->message);
+    g_error_free(error);
+    qmi_message_wds_get_current_settings_output_unref(output);
+    return;
+  }
+
+  uint32_t primary_dns, secondary_dns;
+  if (qmi_message_wds_get_current_settings_output_get_primary_ipv4_dns_address(output, &primary_dns, NULL))
+  {
+    qmi_status.primary_dns.s_addr = GUINT32_TO_BE(primary_dns);
+    qmi_status.primary_dns_valid = true;
+  }
+
+  if (qmi_message_wds_get_current_settings_output_get_secondary_ipv4_dns_address(output, &secondary_dns, NULL))
+  {
+    qmi_status.secondary_dns.s_addr = GUINT32_TO_BE(secondary_dns);
+    qmi_status.secondary_dns_valid = true;
+  }
+
+  qmi_message_wds_get_current_settings_output_unref(output);
+}
+
 static void serving_system_ready(QmiClientNas *client,
                                  GAsyncResult *res)
 {
@@ -1074,11 +1132,27 @@ static void serving_system_ready(QmiClientNas *client,
   qmi_message_nas_get_serving_system_output_unref(output);
 }
 
-void query_serving_system(void)
+static void query_serving_system(void)
 {
   qmi_client_nas_get_serving_system
     (nas_client, NULL, QMI_TIMEOUT, cancellable,
      (GAsyncReadyCallback)serving_system_ready, NULL);
+}
+
+static void query_wds_settings(void)
+{
+  QmiMessageWdsGetCurrentSettingsInput *input;
+
+  input = qmi_message_wds_get_current_settings_input_new();
+
+  qmi_message_wds_get_current_settings_input_set_requested_settings
+    (input, QMI_WDS_GET_CURRENT_SETTINGS_REQUESTED_SETTINGS_DNS_ADDRESS, NULL);
+
+  qmi_client_wds_get_current_settings
+    (wds_client, input, QMI_TIMEOUT, cancellable,
+     (GAsyncReadyCallback)wds_settings_ready, NULL);
+
+  qmi_message_wds_get_current_settings_input_unref(input);
 }
 
 static void system_selection_ready(QmiDevice *dev, GAsyncResult *res)
@@ -1354,7 +1428,7 @@ static void serving_system_indication_ready(QmiClientNas *object,
   if (qmi_indication_nas_serving_system_output_get_plmn_not_changed_indication
       (output, &plmn_not_changed_indication, NULL))
   {
-    syslog(LOG_INFO, "  PLMN not changed: %d", plmn_not_changed_indication);
+    syslog(LOG_DEBUG, "  PLMN not changed: %d", plmn_not_changed_indication);
   }
 
   QmiNasCallBarringStatus call_barring_status_cs_status;
@@ -1362,8 +1436,8 @@ static void serving_system_indication_ready(QmiClientNas *object,
   if (qmi_indication_nas_serving_system_output_get_call_barring_status
       (output, &call_barring_status_cs_status, &call_barring_status_ps_status, NULL))
   {
-    syslog(LOG_INFO, "  CS call barring status: %s", qmi_nas_call_barring_status_get_string(call_barring_status_cs_status));
-    syslog(LOG_INFO, "  PS call barring status: %s", qmi_nas_call_barring_status_get_string(call_barring_status_ps_status));
+    syslog(LOG_DEBUG, "  CS call barring status: %s", qmi_nas_call_barring_status_get_string(call_barring_status_cs_status));
+    syslog(LOG_DEBUG, "  PS call barring status: %s", qmi_nas_call_barring_status_get_string(call_barring_status_ps_status));
   }
 
   QmiNasServiceStatus detailed_service_status_status;
@@ -1830,7 +1904,7 @@ static void nas_set_mode(enum SignalType type)
   }
   else
   {
-    syslog(LOG_INFO, "Domain Preference: %s",
+    syslog(LOG_DEBUG, "Domain Preference: %s",
            qmi_nas_service_domain_preference_get_string(qmi_settings.domain));
   }
 
@@ -2246,6 +2320,114 @@ static void device_new_ready(GObject *unused, GAsyncResult *res)
                   (GAsyncReadyCallback)device_open_ready, NULL);
 }
 
+struct DnsHeader
+{
+    unsigned short id;
+
+    unsigned char recursion_desired :1;
+    unsigned char truncated_message :1;
+    unsigned char authoritive_answer :1;
+    unsigned char opcode :4;
+    unsigned char query_response :1;
+
+    unsigned char response_code :4;
+    unsigned char checking_disabled :1;
+    unsigned char authenticated_data :1;
+    unsigned char z :1;
+    unsigned char recursion_available :1;
+
+    unsigned short question_count;
+    unsigned short answer_count;
+    unsigned short auth_count;
+    unsigned short add_count;
+};
+
+struct DnsQuestion
+{
+    unsigned short question_type;
+    unsigned short question_class;
+};
+
+static void dns_name_format(char* dns,const char* host)
+{
+  int lock = 0 , i;
+  strcat((char*)host,".");
+
+  for(i = 0 ; i < strlen((char*)host) ; i++)
+  {
+    if(host[i]=='.')
+    {
+      *dns++ = i-lock;
+      for(;lock<i;lock++)
+      {
+        *dns++=host[lock];
+      }
+      lock++;
+    }
+  }
+  *dns++='\0';
+}
+
+static int dns_test(struct in_addr *server)
+{
+  const char host[] = "deltenna.com";
+
+  char buf[65536];
+  bzero(buf, 65536);
+
+  int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+  struct sockaddr_in dest;
+  dest.sin_family = AF_INET;
+  dest.sin_port = htons(53);
+  dest.sin_addr.s_addr = server->s_addr;
+
+  struct timeval tv;
+  tv.tv_sec = 2;
+  tv.tv_usec = 0;
+  if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+      syslog(LOG_ERR, "Failed to set DNS timeout: %s", strerror(errno));
+      return 0;
+  }
+
+  struct DnsHeader *dns = NULL;
+  dns = (struct DnsHeader *)&buf;
+
+  dns->id = (unsigned short) htons(getpid());
+  dns->recursion_desired = 1;
+  dns->question_count = htons(1);
+
+  char *qname = (char*)&buf[sizeof(struct DnsHeader)];
+
+  dns_name_format(qname , host);
+
+  struct DnsQuestion *qinfo = NULL;
+  qinfo = (struct DnsQuestion*)&buf[sizeof(struct DnsHeader) + (strlen((const char*)qname) + 1)];
+
+  qinfo->question_type = htons(1);
+  qinfo->question_class = htons(1);
+
+  size_t tx_length = sizeof(struct DnsHeader) + (strlen((const char*)qname)+1) + sizeof(struct DnsQuestion);
+  if(sendto(s, (char*)buf, tx_length, 0, (struct sockaddr*)&dest, sizeof(dest)) < 0)
+  {
+    syslog(LOG_INFO, "Failed to send DNS message: %s", strerror(errno));
+    return 1;
+  }
+
+  socklen_t dest_size = sizeof(dest);
+  if(recvfrom (s, (char*)buf , 65536, 0, (struct sockaddr*)&dest, &dest_size) < 0)
+  {
+    syslog(LOG_INFO, "Failed to receive DNS response: %s", strerror(errno));
+    return 1;
+  }
+
+  dns = (struct DnsHeader*) buf;
+
+  syslog(LOG_DEBUG, "DNS response");
+
+  return 0;
+}
+
 static void packet_service_status_ready(QmiClientWds *client, GAsyncResult *res)
 {
   GError *error = NULL;
@@ -2275,6 +2457,39 @@ static void packet_service_status_ready(QmiClientWds *client, GAsyncResult *res)
   {
     syslog(LOG_DEBUG, "Packet status is: %s",
            qmi_wds_connection_status_get_string(qmi_status.packet_status));
+
+    if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_CONNECTED)
+    {
+      if (qmi_settings.dns_check && qmi_status.next_dns_check < time(NULL))
+      {
+        qmi_status.next_dns_check = time(NULL) + qmi_settings.dns_check;
+        if (qmi_status.primary_dns_valid && dns_test(&qmi_status.primary_dns))
+        {
+          if (qmi_status.secondary_dns_valid && dns_test(&qmi_status.secondary_dns))
+          {
+            if (qmi_status.dns_connected)
+            {
+              if (qmi_settings.dns_reset)
+              {
+                syslog(LOG_INFO, "DNS check failed, resetting...");
+                uqmi_reset();
+                g_error_free(error);
+                exit(QMI_ERROR);
+              }
+              else
+              {
+                syslog(LOG_INFO, "DNS check failed, restarting...");
+                stop_network();
+              }
+            }
+          }
+        }
+        else
+        {
+          qmi_status.dns_connected = true;
+        }
+      }
+    }
   }
 
   qmi_message_wds_get_packet_service_status_output_unref(output);
@@ -2417,6 +2632,12 @@ static void stop_network_ready(QmiClientWds *client, GAsyncResult *res)
   {
     syslog(LOG_ERR, "Failed to stop network: %s", error->message);
     g_error_free(error);
+  }
+
+  if (qmi_status.packet_data_handle != 0xffffffff)
+  {
+    qmi_status.packet_data_handle = 0xffffffff;
+    stop_network();
   }
 
   qmi_message_wds_stop_network_output_unref(output);
@@ -2576,7 +2797,7 @@ static void network_register_ready(QmiClientNas *client, GAsyncResult *res)
   }
   else
   {
-    syslog(LOG_INFO, "Registration complete");
+    syslog(LOG_DEBUG, "Registration complete");
   }
 
   qmi_message_nas_initiate_network_register_output_unref(output);
@@ -3209,13 +3430,17 @@ gboolean main_check(gpointer data)
       {
         syslog(LOG_DEBUG, "Monitoring data connection");
         fclose(fopen("/tmp/connected", "w"));
+        query_wds_settings();
         query_data_connection();
         query_signal_strength();
         query_serving_system();
         if (qmi_status.active_antenna == UnknownBeam)
           qmi_status.active_antenna = beam_from_sysfs();
         if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_DISCONNECTED)
+        {
+          qmi_status.dns_connected = false;
           next_state = StateDataConnect;
+        }
       }
       break;
     case StateCount:

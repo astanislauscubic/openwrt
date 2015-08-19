@@ -11,6 +11,21 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.1-rc8
+-----------------
+
+Build Date : 2015-08-17
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.25 MB (7.69 MB available)
+
+[New Features]
+* Include DNS check to restart the network or reset the device on a DNS failure.
+
+[Improvements]
+
+[Known Issues]
+
 Release 4.0.1-rc7
 -----------------
 
