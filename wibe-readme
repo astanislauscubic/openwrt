@@ -1,4 +1,4 @@
-Release Notes for RangeXD WiBE 4G with 8MB flash
+Release Notes for RangeXD HS150 with 8MB flash
 ================================================
 
 This image is only for 4G WiBE devices with 8MB of flash, it is incompatible
@@ -10,6 +10,21 @@ Firmware. After choosing the new firmware image file and clicking on Flash
 Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
+
+Release 4.0.1
+-----------------
+
+Build Date : 2015-08-26
+Locale     : GB
+Checksum   : bd1165d6b751e4684f26ad4c007e4020
+Size       : Size: 4.25 MB (7.69 MB available)
+
+[New Features]
+* Support for roaming networks can be enabled in Interfaces -> WAN
+* DNS check configurable in Interfaces -> WAN to improve lost network detection
+
+[Improvements]
+* Improved network compatibility and connection stability
 
 Release 4.0.0
 -----------------

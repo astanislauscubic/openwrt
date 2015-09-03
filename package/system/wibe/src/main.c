@@ -3314,7 +3314,6 @@ gboolean main_check(gpointer data)
       }
       break;
     case StateRegister:
-      nas_set_mode(TypeUnknown);
       syslog(LOG_DEBUG, "Registering");
       qmi_status.registration_start = time(NULL);
       SET_STATUS(wan_status, NoService);

@@ -10,5 +10,6 @@ if [[ "$V" == *"rc"* ]]; then
 fi
 cp build_dir/target*/net-snmp-5.7.3/mibs/WIBE-MIB.txt $RELDIR/WIBE-MIB.txt
 pushd $RELDIR
+unix2dos ReleaseNotes.txt
 zip ../wibe-$1.zip *
 popd
