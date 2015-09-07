@@ -873,6 +873,9 @@ static void net_renew_lease(void)
   snprintf(cmd, sizeof(cmd), "kill -s SIGUSR1 \"%s\"", udhcpc_pid);
   fprintf(stderr, "%s\n", cmd);
   system(cmd);
+
+  sleep(1);
+  system("/etc/init.d/dropbear restart");
 }
 
 static void sim_apn_add(struct ApnItem *apn)

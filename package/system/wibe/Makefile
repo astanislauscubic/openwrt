@@ -22,6 +22,7 @@ define Package/wibe/conffiles
 /etc/uci-defaults/00_password
 /etc/uci-defaults/03_wifi
 /etc/config/myproviders
+/etc/config/iperf
 endef
 
 define Package/wibe/description
@@ -63,11 +64,13 @@ define Package/wibe/install
 	$(INSTALL_DIR) $(1)/lib/netifd/proto/
 
 	$(CP) ./files/etc/init.d/umtsd $(1)/etc/init.d/umtsd
+	$(CP) ./files/etc/init.d/iperf $(1)/etc/init.d/iperf
 	$(CP) ./files/etc/init.d/wan_monitor $(1)/etc/init.d/wan_monitor
 	$(CP) ./files/usr/share/umtsd/umtsd.sh $(1)/usr/share/umtsd/umtsd.sh
 	$(CP) ./files/etc/uci-defaults/00_password $(1)/etc/uci-defaults/
 	$(CP) ./files/etc/uci-defaults/03_wifi $(1)/etc/uci-defaults
 	$(CP) ./files/etc/config/myproviders $(1)/etc/config/
+	$(CP) ./files/etc/config/iperf $(1)/etc/config/
 	$(CP) ./files/lib/netifd/proto/qmi.sh $(1)/lib/netifd/proto/
 	$(CP) ./files/sbin/antenna_rescan $(1)/sbin/
 	$(CP) ./files/sbin/antenna_reconnect $(1)/sbin/

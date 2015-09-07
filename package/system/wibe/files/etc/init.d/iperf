@@ -1,0 +1,48 @@
+#!/bin/sh /etc/rc.common
+
+START=50
+STOP=50
+
+USE_PROCD=1
+PROG=/usr/bin/iperf
+NAME=iperf
+
+config_iperf() {
+	local cfg="$1"
+
+}
+
+validate_section_iperf() {
+	uci_validate_section iperf iperf "${1}" \
+		'enable:bool:1' \
+		'Port:list(port):22'
+}
+
+iperf_instance() {
+	local Port enable
+	
+	validate_section_iperf "${1}" || {
+		echo "validation failed"
+		return 1
+	}
+
+	[ "${enable}" = "0" ] && return 1
+
+	procd_open_instance
+	procd_set_param command "${PROG}" -s
+	[ -n "${Port}" ] && procd_append_param command -p ${Port}
+	procd_close_instance
+}
+
+start_service() {
+	. /lib/functions.sh
+	. /lib/functions/network.sh
+
+	config_load "${NAME}"
+	config_foreach iperf_instance iperf
+}
+
+service_triggers() {
+	procd_add_reload_trigger "iperf"
+	procd_add_validation validate_section_iperf
+}
