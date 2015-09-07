@@ -11,6 +11,39 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.2-rc2
+-----------------
+
+Build Date : 2015-09-07
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Network -> Interfaces -> Edit WAN now includes options to set modem usage
+  preference and voice domain preference.
+* Hardware watchdog is now controlled from umtsd.
+
+[Known Issues]
+
+Release 4.0.2-rc1
+-----------------
+
+Build Date : 2015-09-03
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.25 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Include iperf startup script (disabled by default).
+* Restart dropbear (SSH) after WAN connection is established.
+
+[Known Issues]
+
 Release 4.0.1-rc9
 -----------------
 

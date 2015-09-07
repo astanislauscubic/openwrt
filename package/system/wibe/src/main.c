@@ -68,6 +68,8 @@ struct QmiSettings {
   int debug;
   QmiDmsLteBandCapability lte_bands;
   QmiDmsBandCapability bands;
+  QmiVoiceDomain voice_domain;
+  QmiNasModemUsagePreference modem_usage;
   int download_test;
   int domain;
   int dns_check;
@@ -78,17 +80,19 @@ static struct QmiSettings qmi_settings;
 static void print_settings(void)
 {
   syslog(LOG_DEBUG, "Settings:");
-  syslog(LOG_DEBUG, "  Protocol:    %s", qmi_settings.proto);
-  syslog(LOG_DEBUG, "  Device:      %s", qmi_settings.device);
-  syslog(LOG_DEBUG, "  Pincode:     %s", qmi_settings.pincode);
-  syslog(LOG_DEBUG, "  Modes:       %s", qmi_settings.modes);
-  syslog(LOG_DEBUG, "  Antenna:     %s", qmi_settings.antenna);
-  syslog(LOG_DEBUG, "  Reg Timeout: %d", qmi_settings.regtimeout);
-  syslog(LOG_DEBUG, "  Roaming:     %d", qmi_settings.enable_roaming);
-  syslog(LOG_DEBUG, "  Debug:       %d", qmi_settings.debug);
-  syslog(LOG_DEBUG, "  Download:    %d", qmi_settings.download_test);
-  syslog(LOG_DEBUG, "  Domain:      %d", qmi_settings.domain);
-  syslog(LOG_DEBUG, "  DNS Check:   %d", qmi_settings.dns_check);
+  syslog(LOG_DEBUG, "  Protocol:     %s", qmi_settings.proto);
+  syslog(LOG_DEBUG, "  Device:       %s", qmi_settings.device);
+  syslog(LOG_DEBUG, "  Pincode:      %s", qmi_settings.pincode);
+  syslog(LOG_DEBUG, "  Modes:        %s", qmi_settings.modes);
+  syslog(LOG_DEBUG, "  Antenna:      %s", qmi_settings.antenna);
+  syslog(LOG_DEBUG, "  Reg Timeout:  %d", qmi_settings.regtimeout);
+  syslog(LOG_DEBUG, "  Roaming:      %d", qmi_settings.enable_roaming);
+  syslog(LOG_DEBUG, "  Debug:        %d", qmi_settings.debug);
+  syslog(LOG_DEBUG, "  Download:     %d", qmi_settings.download_test);
+  syslog(LOG_DEBUG, "  Domain:       %d", qmi_settings.domain);
+  syslog(LOG_DEBUG, "  DNS Check:    %d", qmi_settings.dns_check);
+  syslog(LOG_DEBUG, "  Voice Domain: %s", qmi_voice_domain_get_string(qmi_settings.voice_domain));
+  syslog(LOG_DEBUG, "  Modem Usage:  %s", qmi_nas_modem_usage_preference_get_string(qmi_settings.modem_usage));
 }
 
 static void snmp_write_string(FILE *snmpfile, const char *key, const char *value)
@@ -479,6 +483,8 @@ static int load_settings(void)
                       QMI_NAS_SERVICE_DOMAIN_PREFERENCE_CS_PS);
   uci_get_int_default("network.wan.dnscheck", &qmi_settings.dns_check, 60);
   uci_get_int_default("network.wan.dnsreset", &qmi_settings.dns_reset, 0);
+  uci_get_int_default("network.wan.voicedomain", (int*)&qmi_settings.voice_domain, QMI_VOICE_DOMAIN_CS_ONLY);
+  uci_get_int_default("network.wan.modemusage", (int*)&qmi_settings.modem_usage, QMI_NAS_MODEM_USAGE_DATA);
 
   return 1;
 }
@@ -1830,7 +1836,7 @@ static void restrict_bands(QmiDmsLteBandCapability lte_bands, QmiDmsBandCapabili
     (input, bands, NULL);
 
   qmi_message_nas_set_system_selection_preference_input_set_modem_usage_preference
-    (input, QMI_NAS_MODEM_USAGE_DATA, NULL);
+    (input, qmi_settings.modem_usage, NULL);
 
   qmi_client_nas_set_system_selection_preference
     (nas_client, input, 10, cancellable,
@@ -1926,7 +1932,7 @@ static void setup_voice(void)
 
   input = qmi_message_voice_set_config_input_new();
 
-  qmi_message_voice_set_config_input_set_preferred_voice_domain(input, QMI_VOICE_DOMAIN_CS_ONLY, NULL);
+  qmi_message_voice_set_config_input_set_preferred_voice_domain(input, qmi_settings.voice_domain, NULL);
 
   qmi_client_voice_set_config(voice_client, input, QMI_TIMEOUT, NULL, (GAsyncReadyCallback)set_voice_ready, NULL);
 
@@ -3518,6 +3524,8 @@ int main(int argc, char **argv)
   GMainLoop *loop = g_main_loop_new (NULL, FALSE);
   g_timeout_add_seconds(3, main_check, "main check");
 
+  system("ubus call system watchdog '{ \"stop\": true }'");
+  sleep(1);
   wdog_fd = open("/dev/watchdog", O_RDWR);
   if (wdog_fd == -1)
   {
@@ -3530,7 +3538,8 @@ int main(int argc, char **argv)
       syslog(LOG_INFO, "Last boot is caused by: %s\n", (bootstatus != 0) ? "Watchdog" : "Power-On-Reset");
     }
 
-    if (ioctl(wdog_fd, WDIOC_SETTIMEOUT, WDOG_INTERVAL) != 0)
+    int timeout = WDOG_INTERVAL;
+    if (ioctl(wdog_fd, WDIOC_SETTIMEOUT, &timeout) != 0)
     {
       syslog(LOG_INFO, "Failed to set watchdog interval: %s", strerror(errno));
     }

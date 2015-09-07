@@ -67,6 +67,7 @@ define Package/wibe/install
 	$(CP) ./files/etc/init.d/iperf $(1)/etc/init.d/iperf
 	$(CP) ./files/etc/init.d/wan_monitor $(1)/etc/init.d/wan_monitor
 	$(CP) ./files/usr/share/umtsd/umtsd.sh $(1)/usr/share/umtsd/umtsd.sh
+	$(CP) ./files/usr/share/umtsd/padding.bin $(1)/usr/share/umtsd/padding.bin
 	$(CP) ./files/etc/uci-defaults/00_password $(1)/etc/uci-defaults/
 	$(CP) ./files/etc/uci-defaults/03_wifi $(1)/etc/uci-defaults
 	$(CP) ./files/etc/config/myproviders $(1)/etc/config/
