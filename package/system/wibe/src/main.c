@@ -38,6 +38,8 @@
 
 #define WDOG_INTERVAL 30
 
+#define CONNECTION_TIMEOUT 120
+
 static int wdog_fd = -1;
 
 static void qmi_error(void)
@@ -116,13 +118,15 @@ enum SignalType {
   TypeLte,
   TypeWcdma,
   TypeCount,
-  TypeUnknown = TypeCount
+  TypeUnknown,
+  TypeMixed = TypeCount
 };
 
 static const char *SignalTypeText[] = {
   [TypeLte] = "LTE",
   [TypeWcdma] = "WCDMA",
-  [TypeUnknown] = "Unknown"
+  [TypeUnknown] = "Unknown",
+  [TypeMixed] = "Mixed"
 };
 
 struct ApnItem {
@@ -238,8 +242,9 @@ struct QmiStatus {
   bool primary_dns_valid;
   struct in_addr secondary_dns;
   bool secondary_dns_valid;
-  time_t next_dns_check;
+  struct timespec last_dns_check;
   bool dns_connected;
+  struct timespec last_connection_time;
 };
 static struct QmiStatus qmi_status;
 
@@ -247,6 +252,24 @@ static struct QmiStatus qmi_status;
 
 #define ANTENNAS 4
 static struct AntennaResult antenna_results[TypeCount][ANTENNAS];
+
+static void set_timespec(struct timespec *t)
+{
+  if (clock_gettime(CLOCK_MONOTONIC, t) != 0)
+    syslog(LOG_ERR, "Failed to read monotonic time: %s", strerror(errno));
+}
+
+static bool timespec_elapsed(struct timespec *t, time_t seconds)
+{
+  struct timespec now;
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+  {
+    syslog(LOG_ERR, "Failed to compare monotonic time: %s", strerror(errno));
+    return true;
+  }
+
+  return (t->tv_sec + seconds) < now.tv_sec;
+}
 
 static void qmi_clear_status(void)
 {
@@ -277,8 +300,10 @@ static void qmi_clear_status(void)
 
   qmi_status.primary_dns_valid = false;
   qmi_status.secondary_dns_valid = false;
-  qmi_status.next_dns_check = 0;
+  set_timespec(&qmi_status.last_dns_check);
   qmi_status.dns_connected = false;
+
+  set_timespec(&qmi_status.last_connection_time);
 }
 
 static void luci_write_status(void)
@@ -475,14 +500,13 @@ static int load_settings(void)
                          sizeof(qmi_settings.modes), "detect");
   uci_get_string_default("network.wan.antenna", qmi_settings.antenna,
                          sizeof(qmi_settings.antenna), "detect");
-  uci_get_int_default("network.wan.regtimeout", &qmi_settings.regtimeout, 60);
+  uci_get_int_default("network.wan.regtimeout", &qmi_settings.regtimeout, 4);
   uci_get_int_default("network.wan.roaming", &qmi_settings.enable_roaming, 0);
   uci_get_int_default("network.wan.umtsddebug", &qmi_settings.debug, 0);
   uci_get_int_default("network.wan.download_test", &qmi_settings.download_test, 0);
   uci_get_int_default("network.wan.domain", &qmi_settings.domain,
                       QMI_NAS_SERVICE_DOMAIN_PREFERENCE_CS_PS);
   uci_get_int_default("network.wan.dnscheck", &qmi_settings.dns_check, 60);
-  uci_get_int_default("network.wan.dnsreset", &qmi_settings.dns_reset, 0);
   uci_get_int_default("network.wan.voicedomain", (int*)&qmi_settings.voice_domain, QMI_VOICE_DOMAIN_CS_ONLY);
   uci_get_int_default("network.wan.modemusage", (int*)&qmi_settings.modem_usage, QMI_NAS_MODEM_USAGE_DATA);
 
@@ -880,7 +904,7 @@ static void net_renew_lease(void)
   fprintf(stderr, "%s\n", cmd);
   system(cmd);
 
-  sleep(1);
+  sleep(2);
   system("/etc/init.d/dropbear restart");
 }
 
@@ -939,6 +963,58 @@ static void sim_apn_generate_list(void)
 {
   sim_apn_generate_list_from_section("myproviders");
   sim_apn_generate_list_from_section("providers");
+}
+
+static bool sim_find_imsi_match(void)
+{
+  struct uci_context *context = NULL;
+  struct uci_package *package;
+  struct uci_section *section;
+  struct uci_element *e;
+
+  assert(qmi_status.imsi);
+
+  context = uci_alloc_context();
+  if (!context)
+    return false;
+
+  if (uci_load(context, "myproviders", &package) != UCI_OK)
+  {
+    uci_free_context(context);
+    return false;
+  }
+
+  uci_foreach_element(&package->sections, e)
+  {
+    section = uci_to_section(e);
+
+    struct uci_option  *option;
+    struct uci_element *element, *list_el;
+
+    uci_foreach_element(&section->options, element)
+    {
+      if (element->type == UCI_TYPE_OPTION)
+      {
+        option = uci_to_option(element);
+
+        if (!strcmp(element->name, "network") && option->type == UCI_TYPE_LIST)
+        {
+          uci_foreach_element(&option->v.list, list_el)
+          {
+            if (strlen(list_el->name) > 0 && !strncmp(qmi_status.imsi, list_el->name, strlen(qmi_status.imsi)))
+              return true;
+          }
+        }
+        else if (!strcmp(element->name, "network") && option->type == UCI_TYPE_STRING)
+        {
+          if (strlen(option->v.string) > 0 && !strncmp(qmi_status.imsi, option->v.string, strlen(qmi_status.imsi)))
+            return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 static void log_handler(const gchar *log_domain, GLogLevelFlags log_level,
@@ -1094,6 +1170,8 @@ static void serving_system_ready(QmiClientNas *client,
       if (intf == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte)
         isValid = true;
       else if (intf == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma)
+        isValid = true;
+      else if (qmi_status.signal_type == TypeMixed)
         isValid = true;
 
       if (isValid)
@@ -1356,7 +1434,8 @@ static void signal_strength_ready(QmiClientNas *client,
       QmiMessageNasGetSignalStrengthOutputRssiListElement rssi;
       rssi = g_array_index(rssi_list, QmiMessageNasGetSignalStrengthOutputRssiListElement, i);
       if ((rssi.radio_interface == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte) ||
-          (rssi.radio_interface == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma))
+          (rssi.radio_interface == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma) ||
+          (qmi_status.signal_type == TypeMixed))
       {
         syslog(LOG_DEBUG, "  RSSI: %d (%s)", -(rssi.rssi), qmi_nas_radio_interface_get_string(rssi.radio_interface));
         if ((qmi_status.wan_status == HomeNetwork || qmi_status.wan_status == RoamingNetwork) && rssi.rssi != 0)
@@ -1394,7 +1473,8 @@ static void signal_strength_ready(QmiClientNas *client,
   if (qmi_message_nas_get_signal_strength_output_get_rsrq(output, &rsrq, &interface, NULL))
   {
     if ((interface == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte) ||
-        (interface == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma))
+        (interface == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma) ||
+        (qmi_status.signal_type == TypeMixed))
     {
       syslog(LOG_DEBUG, "  RSRQ: %d (%s)", rsrq, qmi_nas_radio_interface_get_string(interface));
       SET_STATUS(antenna_stats.rsrq, rsrq);
@@ -1410,7 +1490,8 @@ static void signal_strength_ready(QmiClientNas *client,
       QmiMessageNasGetSignalStrengthOutputEcioListElement ecio;
       ecio = g_array_index(ecio_list, QmiMessageNasGetSignalStrengthOutputEcioListElement, i);
       if ((ecio.radio_interface == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte) ||
-          (ecio.radio_interface == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma))
+          (ecio.radio_interface == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma) ||
+          (qmi_status.signal_type == TypeMixed))
       {
         syslog(LOG_DEBUG, "  ECIO: %d (%s)", ecio.ecio, qmi_nas_radio_interface_get_string(ecio.radio_interface));
         SET_STATUS(antenna_stats.ecio, ecio.ecio);
@@ -1512,6 +1593,8 @@ static void serving_system_indication_ready(QmiClientNas *object,
       if (intf == QMI_NAS_RADIO_INTERFACE_LTE && qmi_status.signal_type == TypeLte)
         isValid = true;
       else if (intf == QMI_NAS_RADIO_INTERFACE_UMTS && qmi_status.signal_type == TypeWcdma)
+        isValid = true;
+      else if (qmi_status.signal_type == TypeMixed)
         isValid = true;
 
       if (isValid)
@@ -1874,7 +1957,7 @@ static void nas_set_mode(enum SignalType type)
     restrict_bands(qmi_settings.lte_bands, qmi_settings.bands);
     qmi_message_nas_set_system_selection_preference_input_set_mode_preference
       (input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS | QMI_NAS_RAT_MODE_PREFERENCE_LTE, NULL);
-    SET_STATUS(signal_type, TypeUnknown);
+    SET_STATUS(signal_type, TypeMixed);
   }
 
   GError *error = NULL;
@@ -2469,9 +2552,9 @@ static void packet_service_status_ready(QmiClientWds *client, GAsyncResult *res)
 
     if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_CONNECTED)
     {
-      if (qmi_settings.dns_check && qmi_status.next_dns_check < time(NULL))
+      if (qmi_settings.dns_check && timespec_elapsed(&qmi_status.last_dns_check, qmi_settings.dns_check))
       {
-        qmi_status.next_dns_check = time(NULL) + qmi_settings.dns_check;
+        set_timespec(&qmi_status.last_dns_check);
         if (qmi_status.primary_dns_valid && dns_test(&qmi_status.primary_dns))
         {
           if (qmi_status.secondary_dns_valid && dns_test(&qmi_status.secondary_dns))
@@ -2482,20 +2565,26 @@ static void packet_service_status_ready(QmiClientWds *client, GAsyncResult *res)
               {
                 syslog(LOG_INFO, "DNS check failed, resetting...");
                 uqmi_reset();
-                g_error_free(error);
                 exit(QMI_ERROR);
               }
               else
               {
                 syslog(LOG_INFO, "DNS check failed, restarting...");
                 stop_network();
+                qmi_settings.dns_reset = true;
               }
             }
+          }
+          else
+          {
+            qmi_status.dns_connected = true;
+            qmi_settings.dns_reset = false;
           }
         }
         else
         {
           qmi_status.dns_connected = true;
+          qmi_settings.dns_reset = false;
         }
       }
     }
@@ -3187,6 +3276,23 @@ gboolean main_check(gpointer data)
 
   enum State next_state = current_state;
 
+  const time_t timeout = CONNECTION_TIMEOUT + 8 * qmi_settings.regtimeout;
+  if (timespec_elapsed(&qmi_status.last_connection_time, timeout))
+  {
+    if (sim_find_imsi_match())
+    {
+      syslog(LOG_ERR, "Failed to make a connection within %d seconds, rebooting...", (int)timeout);
+      system("reboot");
+      while (true)
+        sleep(1);
+    }
+    else
+    {
+      syslog(LOG_ERR, "Failed to make a connection within %d seconds with new SIM %s", (int)timeout, qmi_status.imsi);
+      set_timespec(&qmi_status.last_connection_time);
+    }
+  }
+
   switch (current_state)
   {
     case StateStartup:
@@ -3314,7 +3420,10 @@ gboolean main_check(gpointer data)
         }
         syslog(LOG_INFO, "Selected antenna %s (%s)", AntennaText[antenna->antenna],
                SignalTypeText[antenna->type]);
-        nas_set_mode(antenna->type);
+        if (antenna->type == TypeWcdma)
+          nas_set_mode(TypeMixed);
+        else
+          nas_set_mode(TypeLte);
         antenna_select(antenna->antenna, false);
         antenna_led_selected(antenna->type == TypeLte);
         snmp_write_antenna_test();
@@ -3446,8 +3555,11 @@ gboolean main_check(gpointer data)
           qmi_status.active_antenna = beam_from_sysfs();
         if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_DISCONNECTED)
         {
-          qmi_status.dns_connected = false;
           next_state = StateDataConnect;
+        }
+        else
+        {
+          set_timespec(&qmi_status.last_connection_time);
         }
       }
       break;

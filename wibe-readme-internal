@@ -11,6 +11,47 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.2-rc4
+-----------------
+
+Build Date : 2015-10-08
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Fixed reset on a second DNS check failure.
+
+[Known Issues]
+
+Release 4.0.2-rc3
+-----------------
+
+Build Date : 2015-10-08
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+[New Features]
+* Installed libpcap and fprobe packages.
+
+[Improvements]
+* Removed the DNS reset option. On the first DNS failure the network will
+  restart. On a second failure the modem will be reset.
+* Antenna scan time reduced from a 10 second default to 4 seconds, configurable
+  in Network -> Interfaces -> Edit WAN.
+* An additional watchdog has been added that gives the modem ~2.5 minutes
+  (depending on antenna scan time) to make a network connection. If no
+  connection is made in this time the WiBE will reboot.
+* If 3G mode is selected from the antenna scan results, both 3G and 4G will be
+  enabled allowing the modem to upgrade to 4G if it chooses. If 4G is chosen
+  from the antenna scan results only 4G mode will be enabled.
+
+[Known Issues]
+* Second DNS failure still in testing.
+
 Release 4.0.2-rc2
 -----------------
 
