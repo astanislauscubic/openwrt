@@ -1937,46 +1937,18 @@ static void wds_info_ready(QmiClientNas *object,
   /*qmi_message_nas_set_technology_preference_input_unref(input);*/
 /*}*/
 
-static void restrict_bands(QmiDmsLteBandCapability lte_bands, QmiDmsBandCapability bands)
-{
-  QmiMessageNasSetSystemSelectionPreferenceInput *input;
-  input = qmi_message_nas_set_system_selection_preference_input_new();
-
-  gchar *lte_band_str = qmi_dms_lte_band_capability_build_string_from_mask(lte_bands);
-  syslog(LOG_INFO, "Selecting LTE Bands: %s", lte_band_str);
-  g_free(lte_band_str);
-
-  gchar *band_str = qmi_dms_band_capability_build_string_from_mask(bands);
-  syslog(LOG_INFO, "Selecting UMTS Bands: %s", band_str);
-  g_free(band_str);
-
-  qmi_message_nas_set_system_selection_preference_input_set_lte_band_preference
-    (input, lte_bands, NULL);
-
-  qmi_message_nas_set_system_selection_preference_input_set_band_preference
-    (input, bands, NULL);
-
-  qmi_message_nas_set_system_selection_preference_input_set_modem_usage_preference
-    (input, qmi_settings.modem_usage, NULL);
-
-  qmi_client_nas_set_system_selection_preference
-    (nas_client, input, 10, cancellable,
-     (GAsyncReadyCallback)system_selection_ready, NULL);
-
-  qmi_message_nas_set_system_selection_preference_input_unref (input);
-}
-
 static void nas_set_mode(enum SignalType type)
 {
   QmiMessageNasSetSystemSelectionPreferenceInput *input;
   input = qmi_message_nas_set_system_selection_preference_input_new();
 
-  /*qmi_message_nas_set_system_selection_preference_input_set_mode_preference*/
-    /*(input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS | QMI_NAS_RAT_MODE_PREFERENCE_LTE, NULL);*/
   if (type == TypeLte)
   {
     syslog(LOG_INFO, "Setting mode to LTE");
-    restrict_bands(qmi_settings.lte_bands, 0);
+    qmi_message_nas_set_system_selection_preference_input_set_lte_band_preference
+      (input, qmi_settings.lte_bands, NULL);
+    qmi_message_nas_set_system_selection_preference_input_set_band_preference
+      (input, 0, NULL);
     qmi_message_nas_set_system_selection_preference_input_set_mode_preference
       (input, QMI_NAS_RAT_MODE_PREFERENCE_LTE, NULL);
     SET_STATUS(signal_type, TypeLte);
@@ -1984,7 +1956,10 @@ static void nas_set_mode(enum SignalType type)
   else if (type == TypeWcdma)
   {
     syslog(LOG_INFO, "Setting mode to WCDMA");
-    restrict_bands(0, qmi_settings.bands);
+    qmi_message_nas_set_system_selection_preference_input_set_lte_band_preference
+      (input, 0, NULL);
+    qmi_message_nas_set_system_selection_preference_input_set_band_preference
+      (input, qmi_settings.bands, NULL);
     qmi_message_nas_set_system_selection_preference_input_set_mode_preference
       (input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS, NULL);
     SET_STATUS(signal_type, TypeWcdma);
@@ -1992,7 +1967,10 @@ static void nas_set_mode(enum SignalType type)
   else
   {
     syslog(LOG_INFO, "Setting mode to LTE and WCDMA");
-    restrict_bands(qmi_settings.lte_bands, qmi_settings.bands);
+    qmi_message_nas_set_system_selection_preference_input_set_lte_band_preference
+      (input, qmi_settings.lte_bands, NULL);
+    qmi_message_nas_set_system_selection_preference_input_set_band_preference
+      (input, qmi_settings.bands, NULL);
     qmi_message_nas_set_system_selection_preference_input_set_mode_preference
       (input, QMI_NAS_RAT_MODE_PREFERENCE_UMTS | QMI_NAS_RAT_MODE_PREFERENCE_LTE, NULL);
     SET_STATUS(signal_type, TypeMixed);
@@ -2019,7 +1997,7 @@ static void nas_set_mode(enum SignalType type)
 
   error = NULL;
   if (!qmi_message_nas_set_system_selection_preference_input_set_modem_usage_preference
-    (input, QMI_NAS_MODEM_USAGE_DATA, NULL))
+    (input, qmi_settings.modem_usage, NULL))
   {
     syslog(LOG_ERR, "Failed to set modem usage preference: %s", error->message);
     g_error_free(error);
@@ -3372,6 +3350,7 @@ gboolean main_check(gpointer data)
         qmi_status.download_tests_remaining = 0;
 
         query_data_connection();
+        register_network();
 
         struct stat file_stat;
         lstat("/tmp/connected", &file_stat);
@@ -3424,7 +3403,6 @@ gboolean main_check(gpointer data)
             changed_beam = true;
             break;
           }
-        register_network();
         query_signal_strength();
         query_serving_system();
         next_state = (changed_beam) ? StateWaitForBeam : StateTestsComplete;
@@ -3505,7 +3483,6 @@ gboolean main_check(gpointer data)
       qmi_status.registration_start = time(NULL);
       SET_STATUS(wan_status, NoService);
       query_serving_system();
-      register_network();
       next_state = StateRegisterWait;
       break;
     case StateRegisterWait:
