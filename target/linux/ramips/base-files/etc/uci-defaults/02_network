@@ -139,7 +139,7 @@ set network.wan.proto='qmi'
 set network.wan.device='/dev/cdc-wdm0'
 set network.wan.modes='lte umts'
 set network.wan.antenna='0 1 2 3'
-set network.wan.regtimeout='10'
+set network.wan.regtimeout='4'
 set network.wan.settlewait='5'
 EOF
 		;;

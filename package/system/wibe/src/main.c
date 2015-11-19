@@ -40,6 +40,12 @@
 
 #define CONNECTION_TIMEOUT 120
 
+#define WDS_FAIL_THRESHOLD  10
+static uint32_t wds_settings_fail_count = 0;
+
+#define DNS_FAIL_THRESHOLD  5
+static uint32_t dns_fail_count = 0;
+
 static int wdog_fd = -1;
 
 static void qmi_error(void)
@@ -965,6 +971,31 @@ static void sim_apn_generate_list(void)
   sim_apn_generate_list_from_section("providers");
 }
 
+static void uqmi_save_apn(const char *imsi, struct ApnItem *apn)
+{
+  assert(imsi);
+  assert(apn);
+
+  system("touch /etc/config/sims");
+
+  FILE *tmp = fopen("/tmp/.newsim", "w");
+
+  fprintf(tmp, "delete sims.%s\n", imsi);
+  fprintf(tmp, "set sims.%s=provider\n", imsi);
+  fprintf(tmp, "add_list sims.%s.network=%s\n", imsi, imsi);
+  fprintf(tmp, "set sims.%s.apn=%s\n", imsi, apn->apn);
+  if (apn->username && strlen(apn->username) > 0)
+    fprintf(tmp, "set sims.%s.username=%s\n", imsi, apn->username);
+  if (apn->password && strlen(apn->password) > 0)
+    fprintf(tmp, "set sims.%s.password=%s\n", imsi, apn->password);
+  fprintf(tmp, "commit sims");
+
+  fclose(tmp);
+
+  system("uci batch < /tmp/.newsim");
+  unlink("/tmp/.newsim");
+}
+
 static bool sim_find_imsi_match(void)
 {
   struct uci_context *context = NULL;
@@ -978,7 +1009,7 @@ static bool sim_find_imsi_match(void)
   if (!context)
     return false;
 
-  if (uci_load(context, "myproviders", &package) != UCI_OK)
+  if (uci_load(context, "sims", &package) != UCI_OK)
   {
     uci_free_context(context);
     return false;
@@ -1101,9 +1132,16 @@ static void wds_settings_ready(QmiClientWds *client,
   if (!output)
   {
     syslog(LOG_ERR, "Failed to finish wds settings: %s", error->message);
+    wds_settings_fail_count += 1;
     g_error_free(error);
+    if (wds_settings_fail_count > WDS_FAIL_THRESHOLD)
+    {
+      uqmi_reset();
+      exit(QMI_ERROR);
+    }
     return;
   }
+  wds_settings_fail_count = 0;
 
   if (!qmi_message_wds_get_current_settings_output_get_result(output, &error))
   {
@@ -1352,7 +1390,7 @@ static void event_report_ready(QmiClientNas *object,
       SET_STATUS(antenna_stats.type, TypeUnknown);
       syslog(LOG_ERR, "  Unexpected interface: %s", qmi_nas_radio_interface_get_string(interface));
     }
-    if (qmi_status.signal_type == qmi_status.antenna_stats.type
+    if ((qmi_status.signal_type == qmi_status.antenna_stats.type || qmi_status.signal_type == TypeMixed)
         && (qmi_status.wan_status == HomeNetwork || qmi_status.wan_status == RoamingNetwork)
         && rssi != 0)
     {
@@ -2326,6 +2364,8 @@ static void setup_dms(void)
                                        NULL);
 }
 
+static void packet_service_status_ready(QmiClientWds *client, GAsyncResult *res);
+
 static void allocate_client_ready(QmiDevice *dev, GAsyncResult *res)
 {
   GError *error = NULL;
@@ -2351,6 +2391,9 @@ static void allocate_client_ready(QmiDevice *dev, GAsyncResult *res)
     case QMI_SERVICE_WDS:
       wds_client = QMI_CLIENT_WDS(client);
       g_signal_connect(wds_client, "packet-service-status", G_CALLBACK(wds_info_ready), NULL);
+      qmi_client_wds_get_packet_service_status
+        (wds_client, NULL, QMI_TIMEOUT, cancellable,
+         (GAsyncReadyCallback)packet_service_status_ready, NULL);
       return;
     case QMI_SERVICE_UIM:
       uim_client = QMI_CLIENT_UIM(client);
@@ -2520,6 +2563,55 @@ static int dns_test(struct in_addr *server)
   return 0;
 }
 
+static void run_dns_check(void)
+{
+  if (qmi_status.primary_dns_valid && dns_test(&qmi_status.primary_dns))
+  {
+    if (qmi_status.secondary_dns_valid && dns_test(&qmi_status.secondary_dns))
+    {
+      if (qmi_status.dns_connected)
+      {
+        dns_fail_count += 1;
+        syslog(LOG_INFO, "DNS check failed count %d", dns_fail_count);
+        if (dns_fail_count > DNS_FAIL_THRESHOLD)
+        {
+          if (qmi_settings.dns_reset)
+          {
+            syslog(LOG_INFO, "DNS check failed, resetting...");
+            uqmi_reset();
+            exit(QMI_ERROR);
+          }
+          else
+          {
+            syslog(LOG_INFO, "DNS check failed, restarting...");
+            stop_network();
+            qmi_settings.dns_reset = true;
+            set_timespec(&qmi_status.last_dns_check);
+          }
+        }
+      }
+      else
+      {
+        syslog(LOG_INFO, "DNS check failed but not connected yet...");
+      }
+    }
+    else
+    {
+      dns_fail_count = 0;
+      qmi_status.dns_connected = true;
+      qmi_settings.dns_reset = false;
+      set_timespec(&qmi_status.last_dns_check);
+    }
+  }
+  else
+  {
+    dns_fail_count = 0;
+    qmi_status.dns_connected = true;
+    qmi_settings.dns_reset = false;
+    set_timespec(&qmi_status.last_dns_check);
+  }
+}
+
 static void packet_service_status_ready(QmiClientWds *client, GAsyncResult *res)
 {
   GError *error = NULL;
@@ -2554,38 +2646,7 @@ static void packet_service_status_ready(QmiClientWds *client, GAsyncResult *res)
     {
       if (qmi_settings.dns_check && timespec_elapsed(&qmi_status.last_dns_check, qmi_settings.dns_check))
       {
-        set_timespec(&qmi_status.last_dns_check);
-        if (qmi_status.primary_dns_valid && dns_test(&qmi_status.primary_dns))
-        {
-          if (qmi_status.secondary_dns_valid && dns_test(&qmi_status.secondary_dns))
-          {
-            if (qmi_status.dns_connected)
-            {
-              if (qmi_settings.dns_reset)
-              {
-                syslog(LOG_INFO, "DNS check failed, resetting...");
-                uqmi_reset();
-                exit(QMI_ERROR);
-              }
-              else
-              {
-                syslog(LOG_INFO, "DNS check failed, restarting...");
-                stop_network();
-                qmi_settings.dns_reset = true;
-              }
-            }
-          }
-          else
-          {
-            qmi_status.dns_connected = true;
-            qmi_settings.dns_reset = false;
-          }
-        }
-        else
-        {
-          qmi_status.dns_connected = true;
-          qmi_settings.dns_reset = false;
-        }
+        run_dns_check();
       }
     }
   }
@@ -2613,6 +2674,7 @@ static void start_network_ready(QmiClientWds *client, GAsyncResult *res)
                                                                   NULL))
   {
     syslog(LOG_INFO, "Data handle: %d", qmi_status.packet_data_handle);
+    uqmi_save_apn(qmi_status.imsi, apn_list);
   }
   else
   {
@@ -3298,7 +3360,6 @@ gboolean main_check(gpointer data)
     case StateStartup:
       {
         syslog(LOG_DEBUG, "UMTSD Startup");
-        restrict_bands(qmi_settings.lte_bands, qmi_settings.bands);
         if (!qmi_status.imsi || strlen(qmi_status.imsi) < 3)
           break;
         for (size_t i = 0; i < BEAM_TEST_COUNT; ++i)
@@ -3311,18 +3372,26 @@ gboolean main_check(gpointer data)
         qmi_status.download_tests_remaining = 0;
 
         query_data_connection();
-        disable_autoconnect();
-        at_setup();
-        if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_CONNECTED)
-          next_state = StateMonitorData;
+
+        struct stat file_stat;
+        lstat("/tmp/connected", &file_stat);
+        if (S_ISREG(file_stat.st_mode))
+        {
+          if (qmi_status.packet_status == QMI_WDS_CONNECTION_STATUS_CONNECTED)
+          {
+            next_state = StateMonitorData;
+          }
+          else
+          {
+            disable_autoconnect();
+            next_state = StateRegister;
+          }
+        }
         else
         {
-          struct stat file_stat;
-          lstat("/tmp/connected", &file_stat);
-          if (S_ISREG(file_stat.st_mode))
-            next_state = StateRegister;
-          else
-            next_state = StateFindBest;
+          at_setup();
+          disable_autoconnect();
+          next_state = StateFindBest;
         }
       }
       break;

@@ -22,9 +22,9 @@ stop() {
   sleep 1
   /sbin/start-stop-daemon -K -x /sbin/umtsd
   sleep 1
-  killall umtsd
-  sleep 1
-  killall -9 umtsd
+  killall umtsd umtsd.sh
+  sleep 5
+  killall -9 umtsd umtsd.sh
 }
 
 restart() {

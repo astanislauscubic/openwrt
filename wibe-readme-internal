@@ -11,6 +11,69 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.2-rc7
+-----------------
+
+Build Date : 2015-11-12
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Modem resets after repeated QMI timeouts.
+* Multiple DNS attempts are performed before reset.
+
+[Known Issues]
+
+Release 4.0.2-rc6
+-----------------
+
+Build Date : 2015-10-20
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+Release 4.0.2-rc2 up to 4.0.2-rc5 contain a problem that may cause flash
+corruption during an upgrade. This could cause the WiBE to exhibit unexpected
+behaviour after flashing or severe corruption may "brick" the device.
+
+The safest way to upgrade a WiBE with this version is to power off, remove the
+SIM then power up before flashing as normal.
+
+If the SIM is inaccessible, the following instructions may be used:
+ - Login to the web interface
+ - Go to Network -> Interfaces and click Stop next to the WAN interface
+ - Go to System -> Startup, find wan_monitor in the list and click Stop.
+ - Wait at least 30 seconds
+ - Go to System -> Backup/Flash Firmware and upgrade as normal.
+
+[New Features]
+
+[Improvements]
+* Fixes a flash corruption seen during an upgrade from versions 4.0.2-rc2 up to
+  4.0.2-rc5.
+
+[Known Issues]
+
+Release 4.0.2-rc5
+-----------------
+
+Build Date : 2015-10-16
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Improved fast reconnect.
+* Prevent UMTS bands being enabled after a fast reconnect when LTE is selected.
+
+[Known Issues]
+* See Release 4.0.2-rc6
+
 Release 4.0.2-rc4
 -----------------
 
@@ -23,8 +86,11 @@ Size       : Size: 4.50 MB (7.69 MB available)
 
 [Improvements]
 * Fixed reset on a second DNS check failure.
+* Update openssl to v1.0.2d to fix CVE-2015-1793.
+* Backport fix for CVE-2015-3294 to dnsmasq.
 
 [Known Issues]
+* See Release 4.0.2-rc6
 
 Release 4.0.2-rc3
 -----------------
@@ -51,6 +117,7 @@ Size       : Size: 4.50 MB (7.69 MB available)
 
 [Known Issues]
 * Second DNS failure still in testing.
+* See Release 4.0.2-rc6
 
 Release 4.0.2-rc2
 -----------------
@@ -68,6 +135,7 @@ Size       : Size: 4.50 MB (7.69 MB available)
 * Hardware watchdog is now controlled from umtsd.
 
 [Known Issues]
+* See Release 4.0.2-rc6
 
 Release 4.0.2-rc1
 -----------------
