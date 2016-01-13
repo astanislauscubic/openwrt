@@ -2541,52 +2541,56 @@ static int dns_test(struct in_addr *server)
   return 0;
 }
 
+bool is_dns_working(void)
+{
+  if (qmi_status.primary_dns_valid)
+    if (!dns_test(&qmi_status.primary_dns))
+      return true;
+
+  if (qmi_status.secondary_dns_valid)
+    if (!dns_test(&qmi_status.secondary_dns))
+      return true;
+
+  return false;
+}
+
 static void run_dns_check(void)
 {
-  if (qmi_status.primary_dns_valid && dns_test(&qmi_status.primary_dns))
-  {
-    if (qmi_status.secondary_dns_valid && dns_test(&qmi_status.secondary_dns))
-    {
-      if (qmi_status.dns_connected)
-      {
-        dns_fail_count += 1;
-        syslog(LOG_INFO, "DNS check failed count %d", dns_fail_count);
-        if (dns_fail_count > DNS_FAIL_THRESHOLD)
-        {
-          if (qmi_settings.dns_reset)
-          {
-            syslog(LOG_INFO, "DNS check failed, resetting...");
-            uqmi_reset();
-            exit(QMI_ERROR);
-          }
-          else
-          {
-            syslog(LOG_INFO, "DNS check failed, restarting...");
-            stop_network();
-            qmi_settings.dns_reset = true;
-            set_timespec(&qmi_status.last_dns_check);
-          }
-        }
-      }
-      else
-      {
-        syslog(LOG_INFO, "DNS check failed but not connected yet...");
-      }
-    }
-    else
-    {
-      dns_fail_count = 0;
-      qmi_status.dns_connected = true;
-      qmi_settings.dns_reset = false;
-      set_timespec(&qmi_status.last_dns_check);
-    }
-  }
-  else
+  if (is_dns_working())
   {
     dns_fail_count = 0;
     qmi_status.dns_connected = true;
     qmi_settings.dns_reset = false;
     set_timespec(&qmi_status.last_dns_check);
+  }
+  else
+  {
+    if (qmi_status.dns_connected)
+    {
+      dns_fail_count += 1;
+      syslog(LOG_INFO, "DNS check failed count %d", dns_fail_count);
+      if (dns_fail_count > DNS_FAIL_THRESHOLD)
+      {
+        if (qmi_settings.dns_reset)
+        {
+          syslog(LOG_INFO, "DNS check failed, resetting...");
+          uqmi_reset();
+          exit(QMI_ERROR);
+        }
+        else
+        {
+          syslog(LOG_INFO, "DNS check failed, restarting...");
+          stop_network();
+          qmi_settings.dns_reset = true;
+          set_timespec(&qmi_status.last_dns_check);
+        }
+      }
+    }
+    else
+    {
+      syslog(LOG_INFO, "DNS check failed but not connected yet...");
+      set_timespec(&qmi_status.last_dns_check);
+    }
   }
 }
 

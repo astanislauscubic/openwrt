@@ -11,6 +11,22 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.2-rc8
+-----------------
+
+Build Date : 2015-11-19
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Request automatic registration once at start, not after each beam change.
+* Prevent reboot if DNS check has never been able to contact a DNS server.
+
+[Known Issues]
+
 Release 4.0.2-rc7
 -----------------
 
