@@ -71,6 +71,7 @@ struct QmiSettings {
   char pincode[32];
   char modes[16];
   char antenna[16];
+  char custom_dns[32];
   int regtimeout;
   int enable_roaming;
   int debug;
@@ -101,6 +102,7 @@ static void print_settings(void)
   syslog(LOG_DEBUG, "  DNS Check:    %d", qmi_settings.dns_check);
   syslog(LOG_DEBUG, "  Voice Domain: %s", qmi_voice_domain_get_string(qmi_settings.voice_domain));
   syslog(LOG_DEBUG, "  Modem Usage:  %s", qmi_nas_modem_usage_preference_get_string(qmi_settings.modem_usage));
+  syslog(LOG_DEBUG, "  Custom DNS:   %s", qmi_settings.custom_dns);
 }
 
 static void snmp_write_string(FILE *snmpfile, const char *key, const char *value)
@@ -251,6 +253,8 @@ struct QmiStatus {
   struct timespec last_dns_check;
   bool dns_connected;
   struct timespec last_connection_time;
+  bool custom_dns_valid;
+  struct in_addr custom_dns;
 };
 static struct QmiStatus qmi_status;
 
@@ -304,6 +308,7 @@ static void qmi_clear_status(void)
   qmi_status.pri_carrier_pri = NULL;
   qmi_status.pri_revision = NULL;
 
+  qmi_status.custom_dns_valid = false;
   qmi_status.primary_dns_valid = false;
   qmi_status.secondary_dns_valid = false;
   set_timespec(&qmi_status.last_dns_check);
@@ -506,6 +511,15 @@ static int load_settings(void)
                          sizeof(qmi_settings.modes), "detect");
   uci_get_string_default("network.wan.antenna", qmi_settings.antenna,
                          sizeof(qmi_settings.antenna), "detect");
+  uci_get_string_default("network.wan.customdns", qmi_settings.custom_dns,
+                         sizeof(qmi_settings.custom_dns), "");
+
+  if (strcmp(qmi_settings.custom_dns, ""))
+  {
+    inet_aton(qmi_settings.custom_dns, &qmi_status.custom_dns);
+    qmi_status.custom_dns_valid = true;
+  }
+
   uci_get_int_default("network.wan.regtimeout", &qmi_settings.regtimeout, 4);
   uci_get_int_default("network.wan.roaming", &qmi_settings.enable_roaming, 0);
   uci_get_int_default("network.wan.umtsddebug", &qmi_settings.debug, 0);
@@ -2543,13 +2557,21 @@ static int dns_test(struct in_addr *server)
 
 bool is_dns_working(void)
 {
-  if (qmi_status.primary_dns_valid)
-    if (!dns_test(&qmi_status.primary_dns))
+  if (qmi_status.custom_dns_valid)
+  {
+    if (!dns_test(&qmi_status.custom_dns))
       return true;
+  }
+  else
+  {
+    if (qmi_status.primary_dns_valid)
+      if (!dns_test(&qmi_status.primary_dns))
+        return true;
 
-  if (qmi_status.secondary_dns_valid)
-    if (!dns_test(&qmi_status.secondary_dns))
-      return true;
+    if (qmi_status.secondary_dns_valid)
+      if (!dns_test(&qmi_status.secondary_dns))
+        return true;
+  }
 
   return false;
 }

@@ -11,6 +11,22 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.2-rc9
+-----------------
+
+Build Date : 2016-02-22
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Replace hostapd package with wpad.
+* Add the option to supply a custom DNS server for the connectivity check.
+
+[Known Issues]
+
 Release 4.0.2-rc8
 -----------------
 
