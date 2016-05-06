@@ -21,6 +21,7 @@ Size       : Size: 4.50 MB (7.69 MB available)
 
 [New Features]
 * Includes the OpenWRT package kmod-ipt-nathelper-extra.
+* Includes the OpenWRT package gre.
 
 [Improvements]
 
