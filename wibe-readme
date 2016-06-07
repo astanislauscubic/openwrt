@@ -11,6 +11,24 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.2
+-----------------
+
+Build Date : 2015-08-26
+Locale     : GB
+Checksum   : 4621ef9a268102ab2171820e1f52267d
+Size       : Size: 4.75 MB (7.69 MB available)
+
+[New Features]
+* Includes the OpenWRT package kmod-ipt-nathelper-extra.
+* Includes the OpenWRT package gre.
+* Includes the OpenWRT libpcap and fprobe packages.
+
+[Improvements]
+* Improved 3G/4G connection speed and reliability.
+* Improved WiFi reliability.
+* Add the option to supply a custom DNS server for the connectivity check.
+
 Release 4.0.1
 -----------------
 
