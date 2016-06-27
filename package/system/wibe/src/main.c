@@ -72,6 +72,8 @@ struct QmiSettings {
   char modes[16];
   char antenna[16];
   char custom_dns[32];
+  char download_test_host[256];
+  char download_test_file[256];
   int regtimeout;
   int enable_roaming;
   int debug;
@@ -98,6 +100,8 @@ static void print_settings(void)
   syslog(LOG_DEBUG, "  Roaming:      %d", qmi_settings.enable_roaming);
   syslog(LOG_DEBUG, "  Debug:        %d", qmi_settings.debug);
   syslog(LOG_DEBUG, "  Download:     %d", qmi_settings.download_test);
+  syslog(LOG_DEBUG, "  Download Host:%s", qmi_settings.download_test_host);
+  syslog(LOG_DEBUG, "  Download File:%s", qmi_settings.download_test_file);
   syslog(LOG_DEBUG, "  Domain:       %d", qmi_settings.domain);
   syslog(LOG_DEBUG, "  DNS Check:    %d", qmi_settings.dns_check);
   syslog(LOG_DEBUG, "  Voice Domain: %s", qmi_voice_domain_get_string(qmi_settings.voice_domain));
@@ -255,6 +259,7 @@ struct QmiStatus {
   struct timespec last_connection_time;
   bool custom_dns_valid;
   struct in_addr custom_dns;
+  double download_mbps[TypeCount];
 };
 static struct QmiStatus qmi_status;
 
@@ -513,6 +518,10 @@ static int load_settings(void)
                          sizeof(qmi_settings.antenna), "detect");
   uci_get_string_default("network.wan.customdns", qmi_settings.custom_dns,
                          sizeof(qmi_settings.custom_dns), "");
+  uci_get_string_default("network.wan.download_test_host", qmi_settings.download_test_host,
+                         sizeof(qmi_settings.download_test_host), "");
+  uci_get_string_default("network.wan.download_test_file", qmi_settings.download_test_file,
+                         sizeof(qmi_settings.download_test_file), "");
 
   if (strcmp(qmi_settings.custom_dns, ""))
   {
@@ -524,6 +533,14 @@ static int load_settings(void)
   uci_get_int_default("network.wan.roaming", &qmi_settings.enable_roaming, 0);
   uci_get_int_default("network.wan.umtsddebug", &qmi_settings.debug, 0);
   uci_get_int_default("network.wan.download_test", &qmi_settings.download_test, 0);
+  if (qmi_settings.download_test)
+  {
+    if (!strcmp(qmi_settings.download_test_host, "") || !strcmp(qmi_settings.download_test_file, ""))
+    {
+      syslog(LOG_ERR, "Host and filename must be specified to enable download test");
+      qmi_settings.download_test = 0;
+    }
+  }
   uci_get_int_default("network.wan.domain", &qmi_settings.domain,
                       QMI_NAS_SERVICE_DOMAIN_PREFERENCE_CS_PS);
   uci_get_int_default("network.wan.dnscheck", &qmi_settings.dns_check, 60);
@@ -3022,7 +3039,7 @@ char *interface_byte_count(const char *interface, int field)
 
 long long download_byte_count(const char *interface)
 {
-  char *token = interface_byte_count("wwan0", 1);
+  char *token = interface_byte_count(interface, 1);
   if (token == NULL) return -1;
 
   return strtoll(token, NULL, 10);
@@ -3068,6 +3085,8 @@ static void start_download(int threads, const char *host, const char *file)
 void stop_download(void)
 {
   system("killall download_data");
+  sleep(1);
+  system("killall -9 download_data");
 }
 
 #define min(a,b) \
@@ -3342,7 +3361,7 @@ gboolean main_check(gpointer data)
 
   enum State next_state = current_state;
 
-  const time_t timeout = CONNECTION_TIMEOUT + 8 * qmi_settings.regtimeout;
+  const time_t timeout = CONNECTION_TIMEOUT + 8 * qmi_settings.regtimeout + 120 * qmi_settings.download_test;
   if (timespec_elapsed(&qmi_status.last_connection_time, timeout))
   {
     if (sim_find_imsi_match())
@@ -3493,8 +3512,10 @@ gboolean main_check(gpointer data)
         }
         syslog(LOG_INFO, "Selected antenna %s (%s)", AntennaText[antenna->antenna],
                SignalTypeText[antenna->type]);
-        if (antenna->type == TypeWcdma)
-          nas_set_mode(TypeMixed);
+        if (antenna->type == TypeWcdma && qmi_status.download_tests_remaining)
+          nas_set_mode(TypeWcdma);
+        else if (antenna->type == TypeWcdma)
+          nas_set_mode(TypeWcdma);
         else
           nas_set_mode(TypeLte);
         antenna_select(antenna->antenna, false);
@@ -3572,7 +3593,8 @@ gboolean main_check(gpointer data)
     case StateDownloadTest:
       {
         int threads = 3;
-        const char *hostname = "172.17.13.123";
+        //const char *hostname = "172.17.13.123";
+        const char *hostname = "192.168.1.156";
         const char *filename = "/16MB.bin";
         start_download(threads, hostname, filename);
 
@@ -3592,6 +3614,8 @@ gboolean main_check(gpointer data)
         for (size_t i = 0; i < measurements; ++i)
         {
           wait_for_timer(timer_fd);
+          if (wdog_fd != -1)
+            write(wdog_fd, "w", 1);
           latest_byte_count = download_byte_count("wwan0");
           downloaded = latest_byte_count - last_byte_count;
           mbps = ((downloaded/(measurements+1.0) * 8.0) / 1024.0 / 1024.0);
@@ -3600,6 +3624,8 @@ gboolean main_check(gpointer data)
 
         stop_download();
         close(timer_fd);
+
+        qmi_status.download_mbps[qmi_status.signal_type] = mbps;
 
         syslog(LOG_INFO, "Download test complete for %s", SignalTypeText[qmi_status.signal_type]);
         qmi_status.download_tests_remaining &= ~(1 << qmi_status.signal_type);
@@ -3611,7 +3637,21 @@ gboolean main_check(gpointer data)
         }
         else
         {
-          next_state = StateMonitorData;
+          enum SignalType comparison = (qmi_status.signal_type == TypeLte) ? TypeWcdma : TypeLte;
+          if (qmi_status.download_mbps[comparison] > qmi_status.download_mbps[qmi_status.signal_type])
+          {
+            stop_network();
+            syslog(LOG_INFO, "Switching mode to %s due to faster download results", SignalTypeText[comparison]);
+            const struct AntennaResult *antenna = antenna_find_best_of_type(comparison);
+            nas_set_mode(comparison);
+            antenna_select(antenna->antenna, false);
+            antenna_led_selected(antenna->type == TypeLte);
+            next_state = StateRegister;
+          }
+          else
+          {
+            next_state = StateMonitorData;
+          }
         }
       }
       break;
