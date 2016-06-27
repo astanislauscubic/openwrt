@@ -519,9 +519,9 @@ static int load_settings(void)
   uci_get_string_default("network.wan.customdns", qmi_settings.custom_dns,
                          sizeof(qmi_settings.custom_dns), "");
   uci_get_string_default("network.wan.download_test_host", qmi_settings.download_test_host,
-                         sizeof(qmi_settings.download_test_host), "");
+                         sizeof(qmi_settings.download_test_host), "download.iwab.co.uk");
   uci_get_string_default("network.wan.download_test_file", qmi_settings.download_test_file,
-                         sizeof(qmi_settings.download_test_file), "");
+                         sizeof(qmi_settings.download_test_file), "/download.php");
 
   if (strcmp(qmi_settings.custom_dns, ""))
   {
@@ -3593,10 +3593,7 @@ gboolean main_check(gpointer data)
     case StateDownloadTest:
       {
         int threads = 3;
-        //const char *hostname = "172.17.13.123";
-        const char *hostname = "192.168.1.156";
-        const char *filename = "/16MB.bin";
-        start_download(threads, hostname, filename);
+        start_download(threads, qmi_settings.download_test_host, qmi_settings.download_test_file);
 
         long long last_byte_count = download_byte_count("wwan0");
         timer_fd = open_timer(1, 1);
