@@ -3078,7 +3078,7 @@ static void start_download(int threads, const char *host, const char *file)
            "for i in `seq %d`; do ( /usr/sbin/download_data %s \"%s\" & ); done",
            threads, host, file);
   system(command);
-  sleep(1);
+  sleep(2);
   free(command);
 }
 
@@ -3491,10 +3491,12 @@ gboolean main_check(gpointer data)
         }
         else if (qmi_settings.download_test > 0 && !qmi_status.download_tests_complete)
         {
-          const struct AntennaResult *best_wcdma;
-          const struct AntennaResult *best_lte;
-          best_wcdma = antenna_find_best_of_type(TypeWcdma);
-          best_lte = antenna_find_best_of_type(TypeLte);
+          const struct AntennaResult *best_wcdma = NULL;
+          const struct AntennaResult *best_lte = NULL;
+          if (is_mode_enabled(TypeWcdma))
+            best_wcdma = antenna_find_best_of_type(TypeWcdma);
+          if (is_mode_enabled(TypeLte))
+            best_lte = antenna_find_best_of_type(TypeLte);
           if (best_wcdma && best_lte)
           {
             antenna = best_wcdma;
@@ -3607,7 +3609,7 @@ gboolean main_check(gpointer data)
         long long latest_byte_count;
         long long downloaded;
         double mbps;
-        const size_t measurements = 2;
+        const size_t measurements = 3;
         for (size_t i = 0; i < measurements; ++i)
         {
           wait_for_timer(timer_fd);
@@ -3615,8 +3617,8 @@ gboolean main_check(gpointer data)
             write(wdog_fd, "w", 1);
           latest_byte_count = download_byte_count("wwan0");
           downloaded = latest_byte_count - last_byte_count;
-          mbps = ((downloaded/(measurements+1.0) * 8.0) / 1024.0 / 1024.0);
-          syslog(LOG_INFO, "Downloaded %lli bytes, %.02f Mbps\n", downloaded, mbps);
+          mbps = ((downloaded/(i+1.0) * 8.0) / 1024.0 / 1024.0);
+          syslog(LOG_INFO, "Downloaded %lli bytes, %.02f Mbps (%d of %d)\n", downloaded, mbps, (i+1), measurements);
         }
 
         stop_download();
