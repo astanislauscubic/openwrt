@@ -80,7 +80,7 @@ struct QmiSettings {
   QmiDmsLteBandCapability lte_bands;
   QmiDmsBandCapability bands;
   QmiVoiceDomain voice_domain;
-  QmiNasModemUsagePreference modem_usage;
+  //QmiNasModemUsagePreference modem_usage;
   int download_test;
   int domain;
   int dns_check;
@@ -105,7 +105,7 @@ static void print_settings(void)
   syslog(LOG_DEBUG, "  Domain:       %d", qmi_settings.domain);
   syslog(LOG_DEBUG, "  DNS Check:    %d", qmi_settings.dns_check);
   syslog(LOG_DEBUG, "  Voice Domain: %s", qmi_voice_domain_get_string(qmi_settings.voice_domain));
-  syslog(LOG_DEBUG, "  Modem Usage:  %s", qmi_nas_modem_usage_preference_get_string(qmi_settings.modem_usage));
+  //syslog(LOG_DEBUG, "  Modem Usage:  %s", qmi_nas_modem_usage_preference_get_string(qmi_settings.modem_usage));
   syslog(LOG_DEBUG, "  Custom DNS:   %s", qmi_settings.custom_dns);
 }
 
@@ -545,7 +545,7 @@ static int load_settings(void)
                       QMI_NAS_SERVICE_DOMAIN_PREFERENCE_CS_PS);
   uci_get_int_default("network.wan.dnscheck", &qmi_settings.dns_check, 60);
   uci_get_int_default("network.wan.voicedomain", (int*)&qmi_settings.voice_domain, QMI_VOICE_DOMAIN_CS_ONLY);
-  uci_get_int_default("network.wan.modemusage", (int*)&qmi_settings.modem_usage, QMI_NAS_MODEM_USAGE_DATA);
+ // uci_get_int_default("network.wan.modemusage", (int*)&qmi_settings.modem_usage, QMI_NAS_MODEM_USAGE_DATA);
 
   return 1;
 }
@@ -1360,7 +1360,7 @@ static void nas_event_report_ready(QmiDevice *dev, GAsyncResult *res)
     qmi_message_nas_set_event_report_output_unref(output);
 }
 
-static void set_voice_ready(QmiClientVoice *client, GAsyncResult *res)
+/*static void set_voice_ready(QmiClientVoice *client, GAsyncResult *res)
 {
   GError *error = NULL;
 
@@ -1377,7 +1377,7 @@ static void set_voice_ready(QmiClientVoice *client, GAsyncResult *res)
     syslog(LOG_ERR, "Failed to set voice preferences: %s", error->message);
 
   qmi_message_voice_set_config_output_unref(output);
-}
+}*/
 
 static void nas_register_indications_ready(QmiClientNas *client, GAsyncResult *res)
 {
@@ -2026,13 +2026,13 @@ static void nas_set_mode(enum SignalType type)
     g_error_free(error);
   }
 
-  error = NULL;
+ /* error = NULL;
   if (!qmi_message_nas_set_system_selection_preference_input_set_modem_usage_preference
     (input, qmi_settings.modem_usage, NULL))
   {
     syslog(LOG_ERR, "Failed to set modem usage preference: %s", error->message);
     g_error_free(error);
-  }
+  }*/
 
   error = NULL;
   if (!qmi_message_nas_set_system_selection_preference_input_set_service_domain_preference
@@ -2056,7 +2056,7 @@ static void nas_set_mode(enum SignalType type)
   qmi_message_nas_set_system_selection_preference_input_unref(input);
 }
 
-static void setup_voice(void)
+/*static void setup_voice(void)
 {
   QmiMessageVoiceSetConfigInput *input;
 
@@ -2067,7 +2067,7 @@ static void setup_voice(void)
   qmi_client_voice_set_config(voice_client, input, QMI_TIMEOUT, NULL, (GAsyncReadyCallback)set_voice_ready, NULL);
 
   qmi_message_voice_set_config_input_unref(input);
-}
+}*/
 
 static void setup_nas(void)
 {
@@ -2333,6 +2333,8 @@ static void band_capabilities_ready(QmiClientDms *client, GAsyncResult *res)
       QmiDmsLteBandCapability supported = QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_2
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_3
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_4
+                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_8
+                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_20
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_25;
       qmi_settings.lte_bands = supported & lte_band_capability;
     }
@@ -2412,7 +2414,7 @@ static void allocate_client_ready(QmiDevice *dev, GAsyncResult *res)
       return;
     case QMI_SERVICE_VOICE:
       voice_client = QMI_CLIENT_VOICE(client);
-      setup_voice();
+      //setup_voice();
       return;
     default:
       syslog(LOG_ERR, "Unknown service %d", service);

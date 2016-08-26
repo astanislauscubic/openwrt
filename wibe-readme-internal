@@ -11,6 +11,38 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.3-rc1
+-----------------
+
+Build Date : 2016-08-16
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+[New Features]
+* Support band 5 and band 20
+
+[Improvements]
+
+[Known Issues]
+
+Release 4.0.3-rc0
+-----------------
+
+Build Date : 2016-07-01
+Locale     : GB
+Checksum   : 
+Size       : Size: 4.50 MB (7.69 MB available)
+
+[New Features]
+* Download speed test to select between 3G/4G. Disabled by default and will
+  consume data if enabled. Can be enabled in Network -> Interfaces -> Edit WAN.
+  Download URL can be modified under Advanced Settings.
+
+[Improvements]
+
+[Known Issues]
+
 Release 4.0.2-rc10
 -----------------
 

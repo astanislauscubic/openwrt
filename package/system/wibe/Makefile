@@ -33,7 +33,7 @@ export STAGING_PREFIX = $(STAGING_DIR)
 TARGET_CFLAGS += -I$(PKG_BUILD_DIR) \
                  -I$(STAGING_DIR)/usr/include \
                  -std=gnu99 \
-                 -Wall -Werror -g
+                 -Wall -Werror -g -Wno-deprecated-declarations
 #TARGET_CFLAGS += $(shell $(PKG_CONFIG) --cflags json-c)
 TARGET_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0)
 TARGET_CFLAGS += $(shell $(PKG_CONFIG) --cflags qmi-glib)
