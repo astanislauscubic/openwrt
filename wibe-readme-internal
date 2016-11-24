@@ -11,6 +11,21 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.3-rc2
+-----------------
+
+Build Date : 2016-11-28
+Locale     : GB
+Checksum   : 
+Size       : Size: 5.00 MB (7.69 MB available)
+
+[New Features]
+
+[Improvements]
+* Specify connection type as laptop and request IPv4 only
+
+[Known Issues]
+
 Release 4.0.3-rc1
 -----------------
 
@@ -20,7 +35,6 @@ Checksum   :
 Size       : Size: 4.50 MB (7.69 MB available)
 
 [New Features]
-* Support band 5 and band 20
 
 [Improvements]
 

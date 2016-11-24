@@ -255,6 +255,9 @@ struct QmiStatus {
   struct in_addr secondary_dns;
   bool secondary_dns_valid;
   struct timespec last_dns_check;
+  struct in_addr gateway_ip;
+  struct in_addr my_ip;
+  struct in_addr subnet_mask;
   bool dns_connected;
   struct timespec last_connection_time;
   bool custom_dns_valid;
@@ -1152,6 +1155,23 @@ static void pin_status_ready(QmiClientDms *client, GAsyncResult *res)
   qmi_message_dms_uim_get_pin_status_output_unref(status);
 }
 
+static void print_address6(const char *tag, GArray *array, guint32 prefix)
+{
+  struct in6_addr a;
+  char buf[INET6_ADDRSTRLEN + 1];
+  guint32 i;
+
+  memset (buf, 0, sizeof (buf));
+  for (i = 0; i < array->len; i++)
+    a.s6_addr16[i] = GUINT16_TO_BE(g_array_index(array, guint16, i));
+
+  if (inet_ntop (AF_INET6, &a, buf, sizeof (buf) - 1))
+    syslog(LOG_DEBUG, "    %s: %s/%d", tag, buf, prefix);
+  else
+    syslog(LOG_ERR, "Error printing IPv6 address");
+  g_array_free (array, TRUE);
+}
+
 static void wds_settings_ready(QmiClientWds *client,
                                  GAsyncResult *res)
 {
@@ -1182,17 +1202,61 @@ static void wds_settings_ready(QmiClientWds *client,
     return;
   }
 
-  uint32_t primary_dns, secondary_dns;
+  syslog(LOG_INFO, "Have WDS Settings");
+  uint32_t primary_dns, secondary_dns, gateway_ip, subnet_mask, my_ip;
   if (qmi_message_wds_get_current_settings_output_get_primary_ipv4_dns_address(output, &primary_dns, NULL))
   {
     qmi_status.primary_dns.s_addr = GUINT32_TO_BE(primary_dns);
     qmi_status.primary_dns_valid = true;
+    syslog(LOG_DEBUG, "Primary DNS IP: %s", inet_ntoa(qmi_status.primary_dns));
   }
 
   if (qmi_message_wds_get_current_settings_output_get_secondary_ipv4_dns_address(output, &secondary_dns, NULL))
   {
     qmi_status.secondary_dns.s_addr = GUINT32_TO_BE(secondary_dns);
     qmi_status.secondary_dns_valid = true;
+    syslog(LOG_DEBUG, "Secondary DNS IP: %s", inet_ntoa(qmi_status.secondary_dns));
+  }
+
+  if (qmi_message_wds_get_current_settings_output_get_ipv4_gateway_address(output, &gateway_ip, NULL))
+  {
+    qmi_status.gateway_ip.s_addr = GUINT32_TO_BE(gateway_ip);
+    syslog(LOG_DEBUG, "Gateway IP: %s", inet_ntoa(qmi_status.gateway_ip));
+  }
+
+  if (qmi_message_wds_get_current_settings_output_get_ipv4_gateway_subnet_mask(output, &subnet_mask, NULL))
+  {
+    qmi_status.subnet_mask.s_addr = GUINT32_TO_BE(subnet_mask);
+    syslog(LOG_DEBUG, "Subnet Mask: %s", inet_ntoa(qmi_status.subnet_mask));
+  }
+
+  if (qmi_message_wds_get_current_settings_output_get_ipv4_address(output, &my_ip, NULL))
+  {
+    qmi_status.my_ip.s_addr = GUINT32_TO_BE(my_ip);
+    syslog(LOG_DEBUG, "My IP: %s", inet_ntoa(qmi_status.my_ip));
+  }
+
+
+  GArray *array;
+  guint8 prefix;
+  if (qmi_message_wds_get_current_settings_output_get_ipv6_address(output, &array, &prefix, NULL))
+  {
+    print_address6("My IPv6: ", array, prefix);
+  }
+
+  if (qmi_message_wds_get_current_settings_output_get_ipv6_gateway_address(output, &array, &prefix, NULL))
+  {
+    print_address6("Gateway IPv6: ", array, prefix);
+  }
+
+  if (qmi_message_wds_get_current_settings_output_get_ipv6_primary_dns_address(output, &array, NULL))
+  {
+    print_address6("DNS Primary IPv6: ", array, 0);
+  }
+
+  if (qmi_message_wds_get_current_settings_output_get_ipv6_secondary_dns_address(output, &array, NULL))
+  {
+    print_address6("DNS Secondary IPv6: ", array, 0);
   }
 
   qmi_message_wds_get_current_settings_output_unref(output);
@@ -2333,8 +2397,6 @@ static void band_capabilities_ready(QmiClientDms *client, GAsyncResult *res)
       QmiDmsLteBandCapability supported = QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_2
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_3
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_4
-                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_8
-                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_20
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_25;
       qmi_settings.lte_bands = supported & lte_band_capability;
     }
@@ -2759,6 +2821,20 @@ static void start_network(void)
   if (!qmi_message_wds_start_network_input_set_enable_autoconnect(input, true, &error))
   {
     syslog(LOG_ERR, "Failed to set autoconnect field to true: %s", error->message);
+    g_error_free(error);
+    error = NULL;
+  }
+
+  if (!qmi_message_wds_start_network_input_set_ip_family_preference(input, QMI_WDS_IP_FAMILY_IPV4, &error))
+  {
+    syslog(LOG_ERR, "Failed to set ip family field to ipv6: %s", error->message);
+    g_error_free(error);
+    error = NULL;
+  }
+
+  if (!qmi_message_wds_start_network_input_set_call_type(input, QMI_WDS_CALL_TYPE_LAPTOP, &error))
+  {
+    syslog(LOG_ERR, "Failed to set call type field to embedded: %s", error->message);
     g_error_free(error);
     error = NULL;
   }
@@ -3249,7 +3325,7 @@ static void at_set_context(int fd,
 {
   char context[AT_LEN];
   char auth[AT_LEN];
-  snprintf(context, AT_LEN, "1,\"IPV4V6\",\"%s\"", apn);
+  snprintf(context, AT_LEN, "1,\"IP\",\"%s\"", apn);
 
   int auth_type = 0;
   if (password && strcmp(password, ""))
