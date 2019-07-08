@@ -11,6 +11,21 @@ Image, ensure that the size and checksum matches that shown in the version
 information below. Do not continue if the size of the image is larger than the
 space available.
 
+Release 4.0.4-rc0+b1
+-----------------
+
+Build Date : 2019-07-08
+Locale     : GB
+Checksum   : f47a14932653aafc9180389acbb0d3ef
+Size       : Size: 4.75 MB (7.69 MB available)
+
+[New Features]
+* Enabled modem support for LTE B1
+
+[Improvements]
+
+[Known Issues]
+
 Release 4.0.3-rc2
 -----------------
 
