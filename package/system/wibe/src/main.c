@@ -2395,6 +2395,7 @@ static void band_capabilities_ready(QmiClientDms *client, GAsyncResult *res)
         (output, &lte_band_capability, NULL))
     {
       QmiDmsLteBandCapability supported = QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_2
+                                        | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_1
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_3
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_4
                                         | QMI_DMS_LTE_BAND_CAPABILITY_EUTRAN_25;
