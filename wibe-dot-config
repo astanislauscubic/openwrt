@@ -270,7 +270,7 @@ CONFIG_TARGET_INIT_SUPPRESS_STDERR=y
 CONFIG_VERSIONOPT=y
 CONFIG_VERSION_DIST="RangeXD"
 CONFIG_VERSION_NICK="WiBE 4G"
-CONFIG_VERSION_NUMBER="4.0.3-rc2"
+CONFIG_VERSION_NUMBER="4.0.4-rc0+b1"
 CONFIG_VERSION_REPO="http://downloads.openwrt.org/snapshots/trunk/%T/packages"
 CONFIG_VERSION_MANUFACTURER="RangeXD"
 CONFIG_VERSION_PRODUCT="WiBE"
@@ -278,13 +278,13 @@ CONFIG_VERSION_HWREV="4G"
 CONFIG_PER_FEED_REPO=y
 CONFIG_PER_FEED_REPO_ADD_DISABLED=y
 CONFIG_PER_FEED_REPO_ADD_COMMENTED=y
-CONFIG_FEED_dlt=y
 CONFIG_FEED_packages=y
-CONFIG_FEED_luci=y
 CONFIG_FEED_routing=y
 CONFIG_FEED_telephony=y
 CONFIG_FEED_management=y
 CONFIG_FEED_oldpackages=y
+CONFIG_FEED_dlt=y
+CONFIG_FEED_luci=y
 # CONFIG_SMIMEOPT is not set
 CONFIG_OPKGSMIME_PASSPHRASE=y
 
@@ -2513,7 +2513,6 @@ CONFIG_PACKAGE_libpolarssl=m
 # CONFIG_PACKAGE_pgsqlodbc is not set
 # CONFIG_PACKAGE_unixodbc is not set
 # CONFIG_PACKAGE_alsa-lib is not set
-# CONFIG_PACKAGE_argp-standalone is not set
 CONFIG_PACKAGE_glib2=y
 # CONFIG_PACKAGE_libblkid is not set
 CONFIG_PACKAGE_libblobmsg-json=y
@@ -2524,7 +2523,6 @@ CONFIG_PACKAGE_libblobmsg-json=y
 # CONFIG_PACKAGE_libdaemon is not set
 # CONFIG_PACKAGE_libdb47 is not set
 # CONFIG_PACKAGE_libdb47xx is not set
-# CONFIG_PACKAGE_libelf1 is not set
 # CONFIG_PACKAGE_libevent2 is not set
 # CONFIG_PACKAGE_libevent2-core is not set
 # CONFIG_PACKAGE_libevent2-extra is not set
@@ -3027,11 +3025,11 @@ CONFIG_PACKAGE_iw=y
 # CONFIG_PACKAGE_snmp-utils is not set
 CONFIG_PACKAGE_snmpd=y
 # CONFIG_PACKAGE_snmpd-static is not set
-CONFIG_PACKAGE_socat=y
+# CONFIG_PACKAGE_socat is not set
 # CONFIG_PACKAGE_tcpdump is not set
 # CONFIG_PACKAGE_tcpdump-mini is not set
 # CONFIG_PACKAGE_uclient-fetch is not set
-# CONFIG_PACKAGE_uqmi is not set
+CONFIG_PACKAGE_uqmi=y
 # CONFIG_PACKAGE_vnstat is not set
 # CONFIG_PACKAGE_wpa-cli is not set
 # CONFIG_PACKAGE_wpa-supplicant is not set

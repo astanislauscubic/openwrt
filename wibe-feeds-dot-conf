@@ -1,7 +1,7 @@
-src-git dlt git@192.168.16.3:dlt/openwrt-packages.git
 src-git packages https://github.com/openwrt/packages.git;for-14.07
-src-git luci git@git.bath.afterthoughtsoftware.com:dlt/luci.git;luci-0.12
 src-git routing https://github.com/openwrt-routing/packages.git;for-14.07
 src-git telephony https://github.com/openwrt/telephony.git;for-14.07
 src-git management https://github.com/openwrt-management/packages.git;for-14.07
 src-git oldpackages http://git.openwrt.org/14.07/packages.git
+src-git dlt git@gitlab.at-sw.com:deltenna/openwrt-packages.git
+src-git luci git@gitlab.at-sw.com:deltenna/luci.git;luci-0.12
